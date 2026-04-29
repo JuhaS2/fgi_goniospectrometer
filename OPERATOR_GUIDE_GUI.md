@@ -2,7 +2,7 @@
 
 ## Start
 
-- Raspberry Pi target runtime: Python 3.13 in shared venv at `/opt/gonio-venv` (installed via `scripts/install_pi.sh`)
+- Raspberry Pi target runtime: Python 3.7 in shared venv at `/opt/gonio-venv` (installed via `scripts/install_pi.sh`)
 - Real hardware mode:
   - `run-goniocontrol-gui`
 - Dry-run mode (no hardware required):

@@ -7,16 +7,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENV_DIR="/opt/gonio-venv"
-PYTHON_BIN="python3.13"
+PYTHON_BIN="python3.7"
 
 echo "[1/5] Installing OS packages..."
 sudo apt update
-sudo apt install -y python3.13 python3.13-venv python3.13-tk libatlas-base-dev
+sudo apt install -y python3 python3-venv python3-pip python3-tk libatlas-base-dev
 
 echo "[2/5] Creating shared virtual environment at ${VENV_DIR}..."
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
   echo "Could not find ${PYTHON_BIN} after package installation."
-  echo "Install a Raspberry Pi OS release with Python 3.13 packages, then re-run."
+  echo "Install Python 3.7 (or adjust PYTHON_BIN), then re-run."
   exit 1
 fi
 

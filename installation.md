@@ -2,7 +2,7 @@
 
 ## 1) System requirements
 
-- Raspberry Pi OS (or other Linux) with Python 3.13 and `sudo` access.
+- Raspberry Pi OS (or other Linux) with Python 3.7 and `sudo` access.
 - USB access for:
   - XIMC motor controllers
   - LCC controller (serial)
@@ -23,7 +23,7 @@ chmod +x scripts/install_pi.sh scripts/run_goniocontrol_gui.sh
 
 This performs:
 
-- OS package install (`python3.13`, `python3.13-venv`, `python3.13-tk`, etc.)
+- OS package install (`python3`, `python3-venv`, `python3-pip`, `python3-tk`, etc.)
 - shared virtual environment creation at `/opt/gonio-venv`
 - Python dependency install into that venv
 - launcher install to `/usr/local/bin/run-goniocontrol-gui`
@@ -55,7 +55,7 @@ run-goniocontrol-gui --dry-run
 ## Notes
 
 - Using the shared venv avoids needing to switch users just to access Python dependencies.
-- `python3.13-tk` is required for the Tkinter GUI.
+- `python3-tk` is required for the Tkinter GUI.
 - `pyximc` in this project is a Python wrapper file (`pyximc.py`), but it still requires the vendor native `libximc` runtime to be installed and discoverable in the system library path.
 - If LCC is not connected, the app can still start, but polarization functionality may be limited depending on measurement mode.
 
