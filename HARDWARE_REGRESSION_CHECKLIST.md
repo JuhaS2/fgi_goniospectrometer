@@ -4,7 +4,7 @@ Use this checklist on Raspberry Pi + instrument to validate parity with legacy C
 
 ## Environment
 
-- [ ] `python3 goniocontrol_gui.py` launches without traceback.
+- [ ] `run-goniocontrol-gui` launches without traceback.
 - [ ] `Connect Devices` discovers expected motors (zenith, azimuth, sample, polarizers as available).
 - [ ] Spectrometer connects to `169.254.1.11:8080`.
 - [ ] Angle file loads correctly (`Angles.txt` or selected alternate file).
