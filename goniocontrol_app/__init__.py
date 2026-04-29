@@ -1,0 +1,2 @@
+"""Refactored goniocontrol application package."""
+

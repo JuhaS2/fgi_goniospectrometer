@@ -1,0 +1,44 @@
+# Goniocontrol GUI Operator Guide
+
+## Start
+
+- Real hardware mode:
+  - `python3 goniocontrol_gui.py`
+- Dry-run mode (no hardware required):
+  - `GONIO_DRY_RUN=1 python3 goniocontrol_gui.py`
+
+## Typical workflow
+
+1. **System Status**:
+   - Press `Connect Devices`
+   - Press `Load Runtime State`
+   - Run `Preflight` and verify required files are present.
+2. **Measurement Setup**:
+   - Set output file and press `New Dataset`.
+   - Select angle file (`Angles.txt` or `Angles_PanelReflCalib.txt`) and press `Apply Angles`.
+   - Choose reflectance or radiance mode.
+3. **Calibration**:
+   - `Restore Spectrometer` (optional if needed).
+   - `Optimize` at desired white-reference zenith.
+   - `Dark` (close cap before running).
+   - `White` (place white panel before running).
+   - Optionally run `Ending White` at end of sequence.
+4. **Acquisition**:
+   - Use `Go Zenith` and `Zero All` for positioning.
+   - Set repeats and click `Start Measure`.
+   - Use `Abort Measure` to cancel a running sequence.
+5. **Plot/View**:
+   - `View Snapshot` and `Plot Current Data` for quick checks.
+
+## Outputs and compatibility
+
+- Uses and updates compatible artifacts:
+  - `outfile.txt`, `outfile.npy`, `<outfile>.pickle`, `<outfile>.txt`
+  - `DC.npy`, `DriftDC.npy`, `DC_remainder.npy`, `Oheader.npy`
+  - `AA*.npy`, `White*.npy`, `White*E.npy`
+
+## Notes
+
+- GUI preserves legacy workflow logic but runs long operations in background worker threads.
+- `Calibrate Polarizer` is exposed; original model in legacy script is incomplete and remains operator-assisted.
+
