@@ -72,8 +72,10 @@ class GoniocontrolGUI(tk.Tk):
         self.motor_target_vars = {role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES}
         self.motor_drive_buttons = {}
         self.motor_zero_buttons = {}
+        self._shutting_down = False
 
         self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._shutdown)
         self.after(200, self._startup_refresh)
         self.after(500, self._refresh_motor_angles)
 
@@ -118,7 +120,6 @@ class GoniocontrolGUI(tk.Tk):
             ("Restore Spectrometer", self._restore, "Reconnects to spectrometer communication."),
             ("Load Runtime State", self._load_runtime_state, "Unnecessary button? Loads saved runtime settings into the GUI."),
             ("Check configuration", self._run_preflight, "Unnecessary button? Runs startup checks for devices and readiness."),
-            ("Shutdown", self._shutdown, "Shuts down devices and closes the application."),
         )
         for text, command, description in actions:
             row = ttk.Frame(frm)
@@ -170,7 +171,7 @@ class GoniocontrolGUI(tk.Tk):
         return output_frame
 
     def _build_measurement_calibration_frame(self, parent):
-        calibration_frame = ttk.LabelFrame(parent, text="Calibration")
+        calibration_frame = ttk.LabelFrame(parent, text="Spectrometer")
         ttk.Button(calibration_frame, text="Optimize", command=self._optimize).grid(row=0, column=0, padx=4, pady=4, sticky="w")
         ttk.Label(calibration_frame, text="Sensor Zen").grid(row=0, column=1, sticky="w", padx=(12, 4))
         ttk.Entry(calibration_frame, textvariable=self.optimize_zenith_var, width=10).grid(row=0, column=2, sticky="w", padx=4)
@@ -508,12 +509,28 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("VNIR info", lambda: self.log(str(self.workflow.show_vnir_info())))
 
     def _shutdown(self):
-        def run():
-            self.workflow.shutdown()
-            self.after(0, self.destroy)
-
+        if self._shutting_down:
+            return
         if messagebox.askyesno("Exit", "Shutdown devices and exit?"):
-            self.controller.run_async("Shutdown", run)
+            if self.controller.is_busy():
+                messagebox.showwarning("Busy", "Wait for the current operation to finish, then try shutdown again.")
+                return
+            self._shutting_down = True
+            self.busy_var.set("Shutting down")
+            self.update_idletasks()
+            try:
+                self.workflow.shutdown()
+            except Exception as exc:
+                self._shutting_down = False
+                self.busy_var.set("Idle")
+                messagebox.showerror("Shutdown failed", f"Could not shutdown devices:\n{exc}")
+                return
+            self._finalize_exit()
+
+    def _finalize_exit(self):
+        self.controller.shutdown_executor()
+        self.quit()
+        self.destroy()
 
 
 def main():

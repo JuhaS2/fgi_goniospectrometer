@@ -11,6 +11,19 @@ THESE INSTRUCTIONS ARE OUTDATED!
   - `run-goniocontrol-gui --dry-run`
 - Launch from a terminal in the active desktop session (not headless SSH shell).
 
+### Windows PowerShell: run in dry mode
+
+From the repository root (`C:\git\fgi_goniospectrometer`):
+
+1. Activate your Python environment (example for conda):
+   - `conda activate main`
+2. Enable dry mode for this shell session:
+   - `$env:GONIO_DRY_RUN = "1"`
+3. Launch the GUI:
+   - `python .\goniocontrol_gui.py`
+4. Optional cleanup after exit (remove dry-mode env var):
+   - `Remove-Item Env:GONIO_DRY_RUN`
+
 ## Typical workflow
 
 1. **System Status**:

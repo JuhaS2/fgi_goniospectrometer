@@ -59,3 +59,8 @@ class GuiController:
             ),
         )
 
+    def shutdown_executor(self, wait: bool = True) -> None:
+        # Prevent the worker thread from keeping the process alive on app exit.
+        self._cancel_event.set()
+        self.executor.shutdown(wait=wait, cancel_futures=True)
+
