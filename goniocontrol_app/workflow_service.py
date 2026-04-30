@@ -114,13 +114,28 @@ class WorkflowService:
             self.state.devices.npols = 3
 
     def load_runtime_state(self) -> None:
+        self.load_runtime_settings()
+        self.state.runtime_notice = None
         vwl1, _, vdcc = self.spectrometer.vnir_info()
         self.state.calibration.optimizer_header = self.persistence.load_optional_array("Oheader.npy")
         self.state.calibration.dark_current = self.persistence.load_optional_array("DC.npy")
         self.state.calibration.drift_dark = self.persistence.load_optional_array("DriftDC.npy")
         self.state.outfile = self.persistence.load_outfile_name(self.state.outfile)
         self.state.data = self.persistence.load_existing_dataset(self.state.outfile)
-        self.state.angles = self.persistence.read_angles(self.state.angles_file)
+        try:
+            self.state.angles = self.persistence.read_angles(self.state.angles_file)
+        except FileNotFoundError:
+            fallback = Path("Angles.txt")
+            fallback_resolved = self.resolve_path(fallback)
+            self.state.runtime_notice = (
+                f"Saved angles file not found ({self.state.angles_file}); "
+                f"falling back to {fallback_resolved}."
+            )
+            self.state.angles_file = fallback
+            if fallback_resolved.exists():
+                self.state.angles = self.persistence.read_angles(fallback)
+            else:
+                self.state.angles = []
         self.state.calibration.wr_zenith = self.persistence.load_optional_array("WRZA.npy")
         self.state.calibration.dark_remainder = self.persistence.load_optional_array("DC_remainder.npy")
         self._load_polarization_calibration()
@@ -131,6 +146,24 @@ class WorkflowService:
         self._vwl1 = vwl1
         self._vdcc = vdcc
         self._wl = vwl1 + np.arange(Nwl)
+
+    def load_runtime_settings(self) -> None:
+        defaults = {
+            "outfile": self.state.outfile,
+            "angles_file": str(self.state.angles_file),
+            "reflectance_mode": self.state.reflectance_mode,
+        }
+        settings = self.persistence.load_runtime_settings(defaults)
+        self.state.outfile = str(settings["outfile"])
+        self.state.angles_file = Path(str(settings["angles_file"]))
+        self.state.reflectance_mode = bool(settings["reflectance_mode"])
+
+    def save_runtime_settings(self) -> None:
+        self.persistence.save_runtime_settings(
+            outfile=self.state.outfile,
+            angles_file=self.state.angles_file,
+            reflectance_mode=self.state.reflectance_mode,
+        )
 
     def _load_polarization_calibration(self):
         npols = self.state.devices.npols
@@ -151,6 +184,7 @@ class WorkflowService:
             candidate = self.state.workspace / candidate
         self.state.outfile = str(candidate.resolve())
         self.persistence.save_outfile_name(self.state.outfile)
+        self.save_runtime_settings()
         os.makedirs(Path(self.state.outfile).parent, exist_ok=True)
         self.state.data = []
 
@@ -283,6 +317,7 @@ class WorkflowService:
 
     def toggle_mode(self) -> bool:
         self.state.reflectance_mode = not self.state.reflectance_mode
+        self.save_runtime_settings()
         return self.state.reflectance_mode
 
     def view_snapshot(self) -> None:

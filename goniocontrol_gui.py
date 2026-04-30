@@ -291,6 +291,10 @@ class GoniocontrolGUI(tk.Tk):
 
     def _initialize_on_startup(self):
         self.workflow.connect_devices()
+        self.workflow.load_runtime_state()
+        self.after(0, self._sync_runtime_state_ui)
+        if self.state_obj.runtime_notice:
+            self.log(self.state_obj.runtime_notice)
         result = self.workflow.startup_preflight()
         self.log(f"Preflight: {result}")
 
@@ -347,9 +351,18 @@ class GoniocontrolGUI(tk.Tk):
     def _load_runtime_state(self):
         def run():
             self.workflow.load_runtime_state()
-            self.after(0, lambda: self.outfile_var.set(self.state_obj.outfile))
+            self.after(0, self._sync_runtime_state_ui)
+            if self.state_obj.runtime_notice:
+                self.log(self.state_obj.runtime_notice)
 
         self.controller.run_async("Load runtime state", run)
+
+    def _sync_runtime_state_ui(self):
+        self.outfile_var.set(self.state_obj.outfile)
+        angle_path = self.workflow.resolve_path(self.state_obj.angles_file)
+        self.angle_var.set(str(angle_path))
+        self.angles_status_var.set(f"Sequence with {len(self.state_obj.angles)} positions")
+        self.save_format_var.set("reflectance" if self.state_obj.reflectance_mode else "radiance")
 
     def _browse_output_file(self):
         current = Path(self.outfile_var.get().strip() or (self.workspace / "Test00.pickle"))
@@ -387,6 +400,7 @@ class GoniocontrolGUI(tk.Tk):
             self.state_obj.angles = self.workflow.persistence.read_angles(path)
             loaded_positions = len(self.state_obj.angles)
             self.after(0, lambda: self.angles_status_var.set(f"Sequence with {loaded_positions} positions"))
+            self.workflow.save_runtime_settings()
             self.log(f"Loaded {len(self.state_obj.angles)} angle rows from {path}")
 
         self.controller.run_async("Load angles", run)

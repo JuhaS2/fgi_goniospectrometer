@@ -1,1 +1,1 @@
-C:\git\fgi_goniospectrometer\Test11.pickle
+C:\Temp\gonio_data_folder\Test11.pickle

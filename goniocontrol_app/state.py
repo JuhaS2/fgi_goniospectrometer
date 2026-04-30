@@ -57,6 +57,7 @@ class AppState:
     angles_file: Path = field(default_factory=lambda: Path("Angles.txt"))
     angles: List[AngleRow] = field(default_factory=list)
     data: List[Any] = field(default_factory=list)
+    runtime_notice: Optional[str] = None
     calibration: CalibrationState = field(default_factory=CalibrationState)
     devices: DeviceState = field(default_factory=DeviceState)
 

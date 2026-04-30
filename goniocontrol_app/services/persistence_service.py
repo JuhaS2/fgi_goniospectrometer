@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import pickle
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -58,6 +59,48 @@ class PersistenceService:
         normalized = str(self._resolve_outfile_path(outfile))
         (self.workspace / "outfile.txt").write_text(normalized, encoding="utf-8")
         np.save(self.workspace / "outfile.npy", normalized)
+
+    def load_runtime_settings(self, defaults: Dict[str, Any]) -> Dict[str, Any]:
+        settings: Dict[str, Any] = {
+            "outfile": str(self._resolve_outfile_path(str(defaults.get("outfile", "Test00")))),
+            "angles_file": str(defaults.get("angles_file", "Angles.txt")),
+            "reflectance_mode": bool(defaults.get("reflectance_mode", True)),
+        }
+        path = self.workspace / "runtime_settings.json"
+        if not path.exists():
+            return settings
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return settings
+        if not isinstance(data, dict):
+            return settings
+
+        outfile_raw = data.get("outfile")
+        if isinstance(outfile_raw, str) and outfile_raw.strip():
+            settings["outfile"] = str(self._resolve_outfile_path(outfile_raw))
+
+        angles_raw = data.get("angles_file")
+        if isinstance(angles_raw, str) and angles_raw.strip():
+            angles_path = Path(angles_raw.strip())
+            if not angles_path.is_absolute():
+                angles_path = (self.workspace / angles_path).resolve()
+            settings["angles_file"] = str(angles_path)
+
+        mode_raw = data.get("reflectance_mode")
+        if isinstance(mode_raw, bool):
+            settings["reflectance_mode"] = mode_raw
+
+        return settings
+
+    def save_runtime_settings(self, outfile: str, angles_file: Path, reflectance_mode: bool) -> None:
+        settings = {
+            "outfile": str(self._resolve_outfile_path(outfile)),
+            "angles_file": str((angles_file if angles_file.is_absolute() else self.workspace / angles_file).resolve()),
+            "reflectance_mode": bool(reflectance_mode),
+        }
+        path = self.workspace / "runtime_settings.json"
+        path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
     def load_existing_dataset(self, outfile: str):
         pickle_path = self._resolve_outfile_path(outfile)
