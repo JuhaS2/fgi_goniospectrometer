@@ -14,6 +14,17 @@ from goniocontrol_app.workflow_service import WorkflowService
 
 
 class GoniocontrolGUI(tk.Tk):
+    MOTOR_ROLES = (
+        ("zenith", "Sensor Zenith"),
+        ("azimuth", "Sensor Azimuth"),
+        ("sample", "Sample Azimuth"),
+    )
+    MOTOR_LIMITS = {
+        "zenith": (-90.0, 90.0),
+        "azimuth": (-360.0, 360.0),
+        "sample": (-360.0, 360.0),
+    }
+
     def __init__(self):
         super().__init__()
         self.title("Goniocontrol GUI")
@@ -47,11 +58,16 @@ class GoniocontrolGUI(tk.Tk):
         self.state_obj.outfile = default_outfile
         self.angle_var = tk.StringVar(value=str(self.workspace / "Angles.txt"))
         self.repeats_var = tk.StringVar(value="1")
-        self.zenith_var = tk.StringVar(value="0")
         self.white_zenith_var = tk.StringVar(value="0")
+        self.motor_labels = dict(self.MOTOR_ROLES)
+        self.motor_current_vars = {role: tk.StringVar(value="N/A") for role, _ in self.MOTOR_ROLES}
+        self.motor_target_vars = {role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES}
+        self.motor_drive_buttons = {}
+        self.motor_zero_buttons = {}
 
         self._build_ui()
         self.after(200, self._startup_refresh)
+        self.after(500, self._refresh_motor_angles)
 
     def _build_ui(self):
         root = ttk.Frame(self)
@@ -59,21 +75,19 @@ class GoniocontrolGUI(tk.Tk):
 
         top = ttk.Frame(root)
         top.pack(fill=tk.X)
-        ttk.Label(top, text="Status:").pack(side=tk.LEFT)
-        ttk.Label(top, textvariable=self.busy_var).pack(side=tk.LEFT, padx=6)
 
         notebook = ttk.Notebook(root)
         notebook.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
 
         status = ttk.Frame(notebook)
+        motors = ttk.Frame(notebook)
         setup = ttk.Frame(notebook)
         calibr = ttk.Frame(notebook)
-        acquisition = ttk.Frame(notebook)
         plotting = ttk.Frame(notebook)
         notebook.add(status, text="System Status")
-        notebook.add(setup, text="Measurement Setup")
+        notebook.add(motors, text="Motors")
+        notebook.add(setup, text="Measurement")
         notebook.add(calibr, text="Calibration")
-        notebook.add(acquisition, text="Acquisition")
         notebook.add(plotting, text="Plot/View")
 
         self.log_text = tk.Text(root, height=12, wrap=tk.WORD)
@@ -82,17 +96,25 @@ class GoniocontrolGUI(tk.Tk):
         self._build_status_panel(status)
         self._build_setup_panel(setup)
         self._build_calibration_panel(calibr)
-        self._build_acquisition_panel(acquisition)
+        self._build_motors_panel(motors)
         self._build_plotting_panel(plotting)
         self.log(self.log_boot)
 
     def _build_status_panel(self, parent):
-        row = ttk.Frame(parent)
-        row.pack(fill=tk.X, padx=6, pady=6)
-        ttk.Button(row, text="Connect Devices", command=self._connect_devices).pack(side=tk.LEFT, padx=4)
-        ttk.Button(row, text="Load Runtime State", command=self._load_runtime_state).pack(side=tk.LEFT, padx=4)
-        ttk.Button(row, text="Preflight", command=self._run_preflight).pack(side=tk.LEFT, padx=4)
-        ttk.Button(row, text="Shutdown", command=self._shutdown).pack(side=tk.LEFT, padx=4)
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        button_width = 22
+
+        status_row = ttk.Frame(frm)
+        status_row.pack(fill=tk.X, pady=2)
+        ttk.Label(status_row, text="Status:").pack(side=tk.LEFT)
+        ttk.Label(status_row, textvariable=self.busy_var).pack(side=tk.LEFT, padx=6)
+
+        ttk.Button(frm, text="Connect Devices", command=self._connect_devices, width=button_width).pack(anchor="w", padx=4, pady=2)
+        ttk.Button(frm, text="Restore Spectrometer", command=self._restore, width=button_width).pack(anchor="w", padx=4, pady=2)
+        ttk.Button(frm, text="Load Runtime State", command=self._load_runtime_state, width=button_width).pack(anchor="w", padx=4, pady=2)
+        ttk.Button(frm, text="Preflight", command=self._run_preflight, width=button_width).pack(anchor="w", padx=4, pady=2)
+        ttk.Button(frm, text="Shutdown", command=self._shutdown, width=button_width).pack(anchor="w", padx=4, pady=2)
 
     def _build_setup_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -113,32 +135,59 @@ class GoniocontrolGUI(tk.Tk):
             variable=self.reflectance_var,
             command=self._toggle_mode,
         ).grid(row=2, column=1, sticky="w")
+        ttk.Label(frm, text="Measure repeats:").grid(row=3, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(frm, textvariable=self.repeats_var, width=20).grid(row=3, column=1, sticky="w", padx=4, pady=(10, 0))
+        ttk.Button(frm, text="Start Measure", command=self._measure).grid(row=3, column=2, padx=4, pady=(10, 0), sticky="e")
+        ttk.Button(frm, text="Abort Measure", command=self.controller.cancel).grid(
+            row=3, column=3, padx=4, pady=(10, 0), sticky="w"
+        )
         frm.columnconfigure(1, weight=1)
 
     def _build_calibration_panel(self, parent):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        ttk.Label(frm, text="White/Optimize Zenith:").grid(row=0, column=0, sticky="w")
+        ttk.Label(frm, text="Zen angle during WhiteReference/Optimize:").grid(row=0, column=0, sticky="w")
         ttk.Entry(frm, textvariable=self.white_zenith_var, width=20).grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Button(frm, text="Restore Spectrometer", command=self._restore).grid(row=1, column=0, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="Optimize", command=self._optimize).grid(row=1, column=1, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="Dark", command=self._dark).grid(row=1, column=2, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="White", command=self._white).grid(row=2, column=0, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="Ending White", command=self._ending_white).grid(row=2, column=1, padx=4, pady=4, sticky="w")
+        ttk.Button(frm, text="Optimize", command=self._optimize).grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        ttk.Button(frm, text="Dark Current", command=self._dark).grid(row=1, column=1, padx=4, pady=4, sticky="w")
+        ttk.Button(frm, text="White Reference (Start)", command=self._white).grid(row=2, column=0, padx=4, pady=4, sticky="w")
+        ttk.Button(frm, text="White Reference (End)", command=self._ending_white).grid(row=2, column=1, padx=4, pady=4, sticky="w")
         ttk.Button(frm, text="Calibrate Polarizer", command=self._calibrate_polarizer).grid(row=2, column=2, padx=4, pady=4, sticky="w")
 
-    def _build_acquisition_panel(self, parent):
+    def _build_motors_panel(self, parent):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        ttk.Label(frm, text="Zenith angle (Go):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=self.zenith_var, width=20).grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Button(frm, text="Go Zenith", command=self._go_zenith).grid(row=0, column=2, padx=4, pady=4)
-        ttk.Button(frm, text="Zero All", command=self._zero).grid(row=0, column=3, padx=4, pady=4)
-
-        ttk.Label(frm, text="Measure repeats:").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=self.repeats_var, width=20).grid(row=1, column=1, sticky="w", padx=4)
-        ttk.Button(frm, text="Start Measure", command=self._measure).grid(row=1, column=2, padx=4, pady=4)
-        ttk.Button(frm, text="Abort Measure", command=self.controller.cancel).grid(row=1, column=3, padx=4, pady=4)
+        ttk.Label(frm, text="Motor").grid(row=0, column=0, sticky="w")
+        ttk.Label(frm, text="Current angle").grid(row=0, column=1, sticky="w")
+        ttk.Label(frm, text="Target angle").grid(row=0, column=2, sticky="w")
+        for row_idx, (role, label) in enumerate(self.MOTOR_ROLES, start=1):
+            ttk.Label(frm, text=f"{label}:").grid(row=row_idx, column=0, sticky="w")
+            ttk.Entry(frm, textvariable=self.motor_current_vars[role], width=6, state="readonly").grid(
+                row=row_idx, column=1, sticky="w", padx=4
+            )
+            target_controls = ttk.Frame(frm)
+            target_controls.grid(row=row_idx, column=2, sticky="w", padx=4)
+            ttk.Button(target_controls, text="<<", width=3, command=lambda r=role: self._nudge_target(r, -1.0)).grid(
+                row=0, column=0, padx=(0, 2)
+            )
+            ttk.Button(target_controls, text="<", width=3, command=lambda r=role: self._nudge_target(r, -0.1)).grid(
+                row=0, column=1, padx=(0, 2)
+            )
+            ttk.Entry(target_controls, textvariable=self.motor_target_vars[role], width=6).grid(
+                row=0, column=2, padx=(0, 2)
+            )
+            ttk.Button(target_controls, text=">", width=3, command=lambda r=role: self._nudge_target(r, 0.1)).grid(
+                row=0, column=3, padx=(0, 2)
+            )
+            ttk.Button(target_controls, text=">>", width=3, command=lambda r=role: self._nudge_target(r, 1.0)).grid(
+                row=0, column=4
+            )
+            drive_btn = ttk.Button(frm, text="Drive", command=lambda r=role: self._drive_motor(r))
+            drive_btn.grid(row=row_idx, column=3, padx=4, pady=2)
+            zero_btn = ttk.Button(frm, text="Set Zero", command=lambda r=role: self._set_motor_zero(r))
+            zero_btn.grid(row=row_idx, column=4, padx=4, pady=2)
+            self.motor_drive_buttons[role] = drive_btn
+            self.motor_zero_buttons[role] = zero_btn
 
     def _build_plotting_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -152,6 +201,26 @@ class GoniocontrolGUI(tk.Tk):
 
     def _startup_refresh(self):
         self._run_preflight()
+
+    def _refresh_motor_angles(self):
+        if self.controller.is_busy():
+            self.after(500, self._refresh_motor_angles)
+            return
+        for role, _ in self.MOTOR_ROLES:
+            available = role in self.workflow.motors.handles and role in self.state_obj.devices.positions_zero
+            state = "normal" if available else "disabled"
+            self.motor_drive_buttons[role].configure(state=state)
+            self.motor_zero_buttons[role].configure(state=state)
+            if not available:
+                self.motor_current_vars[role].set("N/A")
+                continue
+            try:
+                self.workflow.refresh_motor_position(role)
+                angle = self.workflow.get_motor_angle_from_zero(role)
+                self.motor_current_vars[role].set(self._format_angle(angle))
+            except Exception:
+                self.motor_current_vars[role].set("N/A")
+        self.after(500, self._refresh_motor_angles)
 
     def log(self, msg: str):
         def append():
@@ -241,12 +310,46 @@ class GoniocontrolGUI(tk.Tk):
         za = float(self.white_zenith_var.get() or "0")
         self.controller.run_async("Calibrate polarizer", lambda: self.workflow.calibrate_polarizer(za, progress=self.log))
 
-    def _go_zenith(self):
-        za = float(self.zenith_var.get() or "0")
-        self.controller.run_async("Go zenith", lambda: self.workflow.go_zenith(za))
+    def _format_angle(self, angle: float) -> str:
+        return f"{angle:+.2f}°"
 
-    def _zero(self):
-        self.controller.run_async("Zero all", self.workflow.zero_all)
+    def _nudge_target(self, role: str, delta: float):
+        raw = self.motor_target_vars[role].get().strip()
+        try:
+            current = float(raw) if raw else 0.0
+        except ValueError:
+            current = 0.0
+        self.motor_target_vars[role].set(f"{current + delta:.2f}")
+
+    def _confirm_out_of_range(self, role: str, value: float) -> bool:
+        minimum, maximum = self.MOTOR_LIMITS[role]
+        if minimum <= value <= maximum:
+            return True
+        return messagebox.askyesno(
+            "Target angle outside nominal range",
+            (
+                f"{self.motor_labels[role]} target {value:.2f}° is outside nominal range "
+                f"[{minimum:.2f}, {maximum:.2f}]°. Continue?"
+            ),
+        )
+
+    def _drive_motor(self, role: str):
+        try:
+            target = float(self.motor_target_vars[role].get() or "0")
+        except ValueError:
+            messagebox.showerror("Invalid input", f"Enter a numeric target angle for {self.motor_labels[role]}.")
+            return
+        if not self._confirm_out_of_range(role, target):
+            return
+        motor_name = self.motor_labels[role]
+        self.controller.run_async(
+            f"Drive {motor_name} to {target:.2f} deg",
+            lambda: self.workflow.drive_motor_to_angle(role, target),
+        )
+
+    def _set_motor_zero(self, role: str):
+        motor_name = self.motor_labels[role]
+        self.controller.run_async(f"Set zero for {motor_name}", lambda: self.workflow.set_zero_at_current_position(role))
 
     def _measure(self):
         repeats = int(self.repeats_var.get() or "1")

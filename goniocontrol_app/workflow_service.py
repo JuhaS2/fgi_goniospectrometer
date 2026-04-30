@@ -54,6 +54,8 @@ ShouldCancelFn = Callable[[], bool]
 
 
 class WorkflowService:
+    MOTOR_STEP_SCALE = 100.0
+
     def __init__(
         self,
         state: AppState,
@@ -233,6 +235,32 @@ class WorkflowService:
         zero = self.state.devices.positions_zero["zenith"]
         self.motors.move_deg_from_zero("zenith", angle_deg, zero)
         self.motors.wait("zenith")
+
+    def refresh_motor_position(self, role: str) -> None:
+        if role not in self.motors.handles:
+            raise PreconditionError(f"Motor '{role}' is not available.")
+        self.state.devices.positions_current[role] = self.motors.get_position(role)
+
+    def get_motor_angle_from_zero(self, role: str) -> float:
+        if role not in self.state.devices.positions_zero:
+            raise PreconditionError(f"Motor '{role}' has no zero reference.")
+        if role not in self.state.devices.positions_current:
+            self.refresh_motor_position(role)
+        current = self.state.devices.positions_current[role]
+        zero = self.state.devices.positions_zero[role]
+        return (current.step_position - zero.step_position) / self.MOTOR_STEP_SCALE
+
+    def drive_motor_to_angle(self, role: str, angle_deg: float) -> None:
+        if role not in self.state.devices.positions_zero:
+            raise PreconditionError(f"Motor '{role}' has no zero reference.")
+        zero = self.state.devices.positions_zero[role]
+        self.motors.move_deg_from_zero(role, angle_deg, zero)
+        self.motors.wait(role)
+        self.refresh_motor_position(role)
+
+    def set_zero_at_current_position(self, role: str) -> None:
+        self.refresh_motor_position(role)
+        self.state.devices.positions_zero[role] = self.state.devices.positions_current[role]
 
     def zero_all(self) -> None:
         for role in ["azimuth", "zenith", "sample", "sensor_polarizer", "lamp_polarizer"]:
