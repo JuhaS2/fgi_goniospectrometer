@@ -128,11 +128,14 @@ class WorkflowService:
             self.state.calibration.white = self.persistence.load_optional_array("White44.npy")
 
     def new_dataset(self, outfile: str) -> None:
-        self.state.outfile = outfile.strip() or "Test00"
+        candidate = Path((outfile or "").strip() or "Test00.pickle")
+        if candidate.suffix.lower() != ".pickle":
+            candidate = candidate.with_suffix(".pickle")
+        if not candidate.is_absolute():
+            candidate = self.state.workspace / candidate
+        self.state.outfile = str(candidate.resolve())
         self.persistence.save_outfile_name(self.state.outfile)
-        subdir = Path(self.state.outfile).parent
-        if str(subdir) != ".":
-            os.makedirs(self.state.workspace / subdir, exist_ok=True)
+        os.makedirs(Path(self.state.outfile).parent, exist_ok=True)
         self.state.data = []
 
     def restore_spectrometer(self) -> None:

@@ -13,6 +13,15 @@ class PersistenceService:
     def __init__(self, workspace: Path):
         self.workspace = workspace
 
+    def _resolve_outfile_path(self, outfile: str) -> Path:
+        raw = (outfile or "").strip() or "Test00"
+        path = Path(raw)
+        if not path.is_absolute():
+            path = self.workspace / path
+        if path.suffix.lower() != ".pickle":
+            path = path.with_suffix(".pickle")
+        return path.resolve()
+
     def read_angles(self, angle_file: Path) -> List[AngleRow]:
         path = angle_file if angle_file.is_absolute() else self.workspace / angle_file
         rows: List[AngleRow] = []
@@ -41,31 +50,35 @@ class PersistenceService:
     def load_outfile_name(self, default: str = "Test00") -> str:
         path = self.workspace / "outfile.txt"
         if not path.exists():
-            return default
-        return path.read_text(encoding="utf-8").strip() or default
+            return str(self._resolve_outfile_path(default))
+        stored = path.read_text(encoding="utf-8").strip() or default
+        return str(self._resolve_outfile_path(stored))
 
     def save_outfile_name(self, outfile: str) -> None:
-        (self.workspace / "outfile.txt").write_text(outfile, encoding="utf-8")
-        np.save(self.workspace / "outfile.npy", outfile)
+        normalized = str(self._resolve_outfile_path(outfile))
+        (self.workspace / "outfile.txt").write_text(normalized, encoding="utf-8")
+        np.save(self.workspace / "outfile.npy", normalized)
 
     def load_existing_dataset(self, outfile: str):
-        pickle_path = self.workspace / f"{outfile}.pickle"
+        pickle_path = self._resolve_outfile_path(outfile)
         if not pickle_path.exists():
             return []
         with pickle_path.open("rb") as handle:
             return pickle.load(handle)
 
     def checkpoint_dataset(self, outfile: str, data) -> None:
-        with (self.workspace / f"{outfile}.pickle").open("wb") as handle:
+        pickle_path = self._resolve_outfile_path(outfile)
+        pickle_path.parent.mkdir(parents=True, exist_ok=True)
+        with pickle_path.open("wb") as handle:
             pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def export_text(self, state: AppState) -> None:
-        outfile = state.outfile
+        outfile = self._resolve_outfile_path(state.outfile)
         try:
-            np.savetxt(self.workspace / f"{outfile}_.txt", np.ravel(state.data))
+            np.savetxt(outfile.with_name(f"{outfile.stem}_.txt"), np.ravel(state.data))
         except Exception:
             pass
-        out = self.workspace / f"{outfile}.txt"
+        out = outfile.with_suffix(".txt")
         with out.open("w", encoding="utf-8") as handle:
             for datum in state.data:
                 handle.write(str(datum[:5]))

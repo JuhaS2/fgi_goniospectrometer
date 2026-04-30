@@ -42,7 +42,9 @@ class GoniocontrolGUI(tk.Tk):
 
         self.busy_var = tk.StringVar(value="Idle")
         self.reflectance_var = tk.BooleanVar(value=True)
-        self.outfile_var = tk.StringVar(value="Test00")
+        default_outfile = str((self.workspace / "Test00.pickle").resolve())
+        self.outfile_var = tk.StringVar(value=default_outfile)
+        self.state_obj.outfile = default_outfile
         self.angle_var = tk.StringVar(value=str(self.workspace / "Angles.txt"))
         self.repeats_var = tk.StringVar(value="1")
         self.zenith_var = tk.StringVar(value="0")
@@ -98,10 +100,10 @@ class GoniocontrolGUI(tk.Tk):
 
         ttk.Label(frm, text="Output file:").grid(row=0, column=0, sticky="w")
         ttk.Entry(frm, textvariable=self.outfile_var, width=60).grid(row=0, column=1, sticky="we", padx=6)
-        ttk.Button(frm, text="New Dataset", command=self._new_dataset).grid(row=0, column=2, padx=4)
+        ttk.Button(frm, text="Browse", command=self._browse_output_file).grid(row=0, column=2, padx=4)
 
         ttk.Label(frm, text="Angles file:").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=self.angle_var, width=60).grid(row=1, column=1, sticky="we", padx=6)
+        ttk.Entry(frm, textvariable=self.angle_var, width=60, state="readonly").grid(row=1, column=1, sticky="we", padx=6)
         ttk.Button(frm, text="Browse", command=self._browse_angle_file).grid(row=1, column=2, padx=4)
         ttk.Button(frm, text="Apply Angles", command=self._apply_angles).grid(row=2, column=2, padx=4)
 
@@ -167,10 +169,28 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Connect devices", self.workflow.connect_devices)
 
     def _load_runtime_state(self):
-        self.controller.run_async("Load runtime state", self.workflow.load_runtime_state)
+        def run():
+            self.workflow.load_runtime_state()
+            self.after(0, lambda: self.outfile_var.set(self.state_obj.outfile))
 
-    def _new_dataset(self):
-        outfile = self.outfile_var.get().strip()
+        self.controller.run_async("Load runtime state", run)
+
+    def _browse_output_file(self):
+        current = Path(self.outfile_var.get().strip() or (self.workspace / "Test00.pickle"))
+        selected = filedialog.asksaveasfilename(
+            title="Select output file",
+            initialdir=str(current.parent if current.parent.exists() else self.workspace),
+            initialfile=current.name,
+            defaultextension=".pickle",
+            filetypes=[("Pickle files", "*.pickle"), ("All files", "*.*")],
+        )
+        if not selected:
+            return
+        selected_path = Path(selected)
+        if selected_path.suffix.lower() != ".pickle":
+            selected_path = selected_path.with_suffix(".pickle")
+        outfile = str(selected_path.resolve())
+        self.outfile_var.set(outfile)
         self.controller.run_async("New dataset", lambda: self.workflow.new_dataset(outfile))
 
     def _browse_angle_file(self):
