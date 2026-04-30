@@ -130,8 +130,20 @@ class GoniocontrolGUI(tk.Tk):
         italic_font.configure(slant="italic")
         self.angles_status_font = italic_font
 
-        output_frame = ttk.LabelFrame(frm, text="Output file")
+        output_frame = self._build_output_file_frame(frm)
         output_frame.grid(row=0, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
+
+        calibration_frame = self._build_measurement_calibration_frame(frm)
+        calibration_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
+
+        sequence_frame = self._build_measurement_sequence_frame(frm)
+        sequence_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
+
+        frm.columnconfigure(1, weight=1)
+        sequence_frame.columnconfigure(1, weight=1)
+
+    def _build_output_file_frame(self, parent):
+        output_frame = ttk.LabelFrame(parent, text="Output file")
         ttk.Entry(output_frame, textvariable=self.outfile_var, width=60).grid(row=0, column=0, sticky="we", padx=6, pady=4)
         ttk.Button(output_frame, text="Browse", command=self._browse_output_file).grid(row=0, column=1, padx=4, pady=4)
         format_row = ttk.Frame(output_frame)
@@ -152,9 +164,10 @@ class GoniocontrolGUI(tk.Tk):
             command=self._toggle_mode,
         ).grid(row=0, column=2)
         output_frame.columnconfigure(0, weight=1)
+        return output_frame
 
-        calibration_frame = ttk.LabelFrame(frm, text="Calibration")
-        calibration_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
+    def _build_measurement_calibration_frame(self, parent):
+        calibration_frame = ttk.LabelFrame(parent, text="Calibration")
         ttk.Button(calibration_frame, text="Optimize", command=self._optimize).grid(row=0, column=0, padx=4, pady=4, sticky="w")
         ttk.Label(calibration_frame, text="Sensor Zen").grid(row=0, column=1, sticky="w", padx=(12, 4))
         ttk.Entry(calibration_frame, textvariable=self.optimize_zenith_var, width=10).grid(row=0, column=2, sticky="w", padx=4)
@@ -179,10 +192,10 @@ class GoniocontrolGUI(tk.Tk):
         ttk.Button(calibration_frame, text="Calibrate Polarizer", command=self._calibrate_polarizer).grid(
             row=3, column=0, padx=4, pady=4, sticky="w"
         )
+        return calibration_frame
 
-        sequence_frame = ttk.LabelFrame(frm, text="Measurement Sequence")
-        sequence_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
-
+    def _build_measurement_sequence_frame(self, parent):
+        sequence_frame = ttk.LabelFrame(parent, text="Measurement Sequence")
         ttk.Label(sequence_frame, text="Angles file:").grid(row=0, column=0, sticky="w")
         ttk.Entry(sequence_frame, textvariable=self.angle_var, width=60, state="readonly").grid(
             row=0, column=1, sticky="we", padx=6
@@ -213,8 +226,7 @@ class GoniocontrolGUI(tk.Tk):
             style="TallMeasure.TButton",
             width=button_width,
         ).grid(row=0, column=1)
-        frm.columnconfigure(1, weight=1)
-        sequence_frame.columnconfigure(1, weight=1)
+        return sequence_frame
 
     def _build_calibration_panel(self, parent):
         frm = ttk.Frame(parent)
