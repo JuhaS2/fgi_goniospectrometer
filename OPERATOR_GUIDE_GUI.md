@@ -2,6 +2,8 @@
 
 ## Start
 
+THESE INSTRUCTIONS ARE OUTDATED!
+
 - Raspberry Pi target runtime: Python 3.7 in shared venv at `/opt/gonio-venv` (installed via `scripts/install_pi.sh`)
 - Real hardware mode:
   - `run-goniocontrol-gui`
@@ -17,7 +19,7 @@
    - Run `Preflight` and verify required files are present.
 2. **Measurement Setup**:
    - Set output file and press `New Dataset`.
-   - Select angle file (`Angles.txt` or `Angles_PanelReflCalib.txt`) and press `Apply Angles`.
+   - Select angle file (`Angles.txt` or `Angles_PanelReflCalib.txt`).
    - Choose reflectance or radiance mode.
 3. **Calibration**:
    - `Restore Spectrometer` (optional if needed).

@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -57,6 +60,7 @@ class GoniocontrolGUI(tk.Tk):
         self.outfile_var = tk.StringVar(value=default_outfile)
         self.state_obj.outfile = default_outfile
         self.angle_var = tk.StringVar(value=str(self.workspace / "Angles.txt"))
+        self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
         self.repeats_var = tk.StringVar(value="1")
         self.white_zenith_var = tk.StringVar(value="0")
         self.motor_labels = dict(self.MOTOR_ROLES)
@@ -119,29 +123,57 @@ class GoniocontrolGUI(tk.Tk):
     def _build_setup_panel(self, parent):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        italic_font = tkfont.nametofont("TkDefaultFont").copy()
+        italic_font.configure(slant="italic")
+        self.angles_status_font = italic_font
 
-        ttk.Label(frm, text="Output file:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=self.outfile_var, width=60).grid(row=0, column=1, sticky="we", padx=6)
-        ttk.Button(frm, text="Browse", command=self._browse_output_file).grid(row=0, column=2, padx=4)
-
-        ttk.Label(frm, text="Angles file:").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=self.angle_var, width=60, state="readonly").grid(row=1, column=1, sticky="we", padx=6)
-        ttk.Button(frm, text="Browse", command=self._browse_angle_file).grid(row=1, column=2, padx=4)
-        ttk.Button(frm, text="Apply Angles", command=self._apply_angles).grid(row=2, column=2, padx=4)
-
+        output_frame = ttk.LabelFrame(frm, text="Output file")
+        output_frame.grid(row=0, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
+        ttk.Entry(output_frame, textvariable=self.outfile_var, width=60).grid(row=0, column=0, sticky="we", padx=6, pady=4)
+        ttk.Button(output_frame, text="Browse", command=self._browse_output_file).grid(row=0, column=1, padx=4, pady=4)
         ttk.Checkbutton(
-            frm,
+            output_frame,
             text="Reflectance mode (uncheck for radiance)",
             variable=self.reflectance_var,
             command=self._toggle_mode,
-        ).grid(row=2, column=1, sticky="w")
-        ttk.Label(frm, text="Measure repeats:").grid(row=3, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(frm, textvariable=self.repeats_var, width=20).grid(row=3, column=1, sticky="w", padx=4, pady=(10, 0))
-        ttk.Button(frm, text="Start Measure", command=self._measure).grid(row=3, column=2, padx=4, pady=(10, 0), sticky="e")
-        ttk.Button(frm, text="Abort Measure", command=self.controller.cancel).grid(
-            row=3, column=3, padx=4, pady=(10, 0), sticky="w"
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
+        output_frame.columnconfigure(0, weight=1)
+
+        sequence_frame = ttk.LabelFrame(frm, text="Measurement Sequence")
+        sequence_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
+
+        ttk.Label(sequence_frame, text="Angles file:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(sequence_frame, textvariable=self.angle_var, width=60, state="readonly").grid(
+            row=0, column=1, sticky="we", padx=6
         )
+        ttk.Button(sequence_frame, text="Browse", command=self._browse_angle_file).grid(row=0, column=2, padx=4)
+        ttk.Label(sequence_frame, textvariable=self.angles_status_var, font=self.angles_status_font).grid(
+            row=1, column=1, sticky="w", padx=6
+        )
+        ttk.Button(sequence_frame, text="Show", command=self._show_angle_file).grid(row=1, column=2, padx=4)
+
+        ttk.Label(sequence_frame, text="Sequence repeats:").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(sequence_frame, textvariable=self.repeats_var, width=20).grid(
+            row=2, column=1, sticky="w", padx=4, pady=(10, 0)
+        )
+        style = ttk.Style()
+        style.configure("TallMeasure.TButton", padding=(8, 10))
+
+        button_row = ttk.Frame(sequence_frame)
+        button_row.grid(row=3, column=1, columnspan=2, pady=(10, 0))
+        button_width = 16
+        ttk.Button(
+            button_row, text="Start Measure", command=self._measure, style="TallMeasure.TButton", width=button_width
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(
+            button_row,
+            text="Abort Measure",
+            command=self.controller.cancel,
+            style="TallMeasure.TButton",
+            width=button_width,
+        ).grid(row=0, column=1)
         frm.columnconfigure(1, weight=1)
+        sequence_frame.columnconfigure(1, weight=1)
 
     def _build_calibration_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -200,6 +232,7 @@ class GoniocontrolGUI(tk.Tk):
         self.after(0, lambda: self.busy_var.set("Busy" if busy else "Idle"))
 
     def _startup_refresh(self):
+        self._apply_angles()
         self._run_preflight()
 
     def _refresh_motor_angles(self):
@@ -270,6 +303,7 @@ class GoniocontrolGUI(tk.Tk):
         )
         if selected:
             self.angle_var.set(selected)
+            self._apply_angles()
 
     def _apply_angles(self):
         path = Path(self.angle_var.get())
@@ -277,9 +311,26 @@ class GoniocontrolGUI(tk.Tk):
         def run():
             self.state_obj.angles_file = path
             self.state_obj.angles = self.workflow.persistence.read_angles(path)
+            loaded_positions = len(self.state_obj.angles)
+            self.after(0, lambda: self.angles_status_var.set(f"Sequence with {loaded_positions} positions"))
             self.log(f"Loaded {len(self.state_obj.angles)} angle rows from {path}")
 
         self.controller.run_async("Load angles", run)
+
+    def _show_angle_file(self):
+        path = Path(self.angle_var.get())
+        if not path.exists():
+            messagebox.showerror("Angles file missing", f"Angles file does not exist:\n{path}")
+            return
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["notepad", str(path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as exc:
+            messagebox.showerror("Open file failed", f"Could not open angles file:\n{exc}")
 
     def _toggle_mode(self):
         # Keep both GUI and backend mode aligned.
