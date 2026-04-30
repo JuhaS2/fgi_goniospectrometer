@@ -38,6 +38,7 @@ class GoniocontrolGUI(tk.Tk):
         self.state_obj = AppState(workspace=self.workspace)
         persistence = PersistenceService(self.workspace)
         dry_run = os.environ.get("GONIO_DRY_RUN", "0") == "1"
+        self.dry_run = dry_run
         if dry_run:
             motors = MockMotorService()
             spectrometer = MockSpectrometerService()
@@ -78,23 +79,18 @@ class GoniocontrolGUI(tk.Tk):
 
     def _build_ui(self):
         root = ttk.Frame(self)
-        root.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-
-        top = ttk.Frame(root)
-        top.pack(fill=tk.X)
+        root.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         notebook = ttk.Notebook(root)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        notebook.pack(fill=tk.BOTH, expand=True)
 
         status = ttk.Frame(notebook)
         motors = ttk.Frame(notebook)
         setup = ttk.Frame(notebook)
-        calibr = ttk.Frame(notebook)
         plotting = ttk.Frame(notebook)
         notebook.add(status, text="System Status")
         notebook.add(motors, text="Motors")
         notebook.add(setup, text="Measurement")
-        notebook.add(calibr, text="Calibration")
         notebook.add(plotting, text="Plot/View")
 
         self.log_text = tk.Text(root, height=12, wrap=tk.WORD)
@@ -102,7 +98,6 @@ class GoniocontrolGUI(tk.Tk):
 
         self._build_status_panel(status)
         self._build_setup_panel(setup)
-        self._build_calibration_panel(calibr)
         self._build_motors_panel(motors)
         self._build_plotting_panel(plotting)
         self.log(self.log_boot)
@@ -111,17 +106,25 @@ class GoniocontrolGUI(tk.Tk):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         button_width = 22
+        italic_font = tkfont.nametofont("TkDefaultFont").copy()
+        italic_font.configure(slant="italic")
 
         status_row = ttk.Frame(frm)
         status_row.pack(fill=tk.X, pady=2)
         ttk.Label(status_row, text="Status:").pack(side=tk.LEFT)
         ttk.Label(status_row, textvariable=self.busy_var).pack(side=tk.LEFT, padx=6)
 
-        ttk.Button(frm, text="Connect Devices", command=self._connect_devices, width=button_width).pack(anchor="w", padx=4, pady=2)
-        ttk.Button(frm, text="Restore Spectrometer", command=self._restore, width=button_width).pack(anchor="w", padx=4, pady=2)
-        ttk.Button(frm, text="Load Runtime State", command=self._load_runtime_state, width=button_width).pack(anchor="w", padx=4, pady=2)
-        ttk.Button(frm, text="Preflight", command=self._run_preflight, width=button_width).pack(anchor="w", padx=4, pady=2)
-        ttk.Button(frm, text="Shutdown", command=self._shutdown, width=button_width).pack(anchor="w", padx=4, pady=2)
+        actions = (
+            ("Restore Spectrometer", self._restore, "Reconnects to spectrometer communication."),
+            ("Load Runtime State", self._load_runtime_state, "Unnecessary button? Loads saved runtime settings into the GUI."),
+            ("Check configuration", self._run_preflight, "Unnecessary button? Runs startup checks for devices and readiness."),
+            ("Shutdown", self._shutdown, "Shuts down devices and closes the application."),
+        )
+        for text, command, description in actions:
+            row = ttk.Frame(frm)
+            row.pack(fill=tk.X, padx=4, pady=2, anchor="w")
+            ttk.Button(row, text=text, command=command, width=button_width).pack(side=tk.LEFT)
+            ttk.Label(row, text=description, font=italic_font).pack(side=tk.LEFT, padx=(8, 0))
 
     def _build_setup_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -189,9 +192,6 @@ class GoniocontrolGUI(tk.Tk):
         ttk.Label(white_row, text="Sensor Zen").grid(row=0, column=2, sticky="w", padx=(0, 4))
         ttk.Entry(white_row, textvariable=self.white_ref_zenith_var, width=10).grid(row=0, column=3, sticky="w")
 
-        ttk.Button(calibration_frame, text="Calibrate Polarizer", command=self._calibrate_polarizer).grid(
-            row=3, column=0, padx=4, pady=4, sticky="w"
-        )
         return calibration_frame
 
     def _build_measurement_sequence_frame(self, parent):
@@ -228,22 +228,21 @@ class GoniocontrolGUI(tk.Tk):
         ).grid(row=0, column=1)
         return sequence_frame
 
-    def _build_calibration_panel(self, parent):
-        frm = ttk.Frame(parent)
-        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-
     def _build_motors_panel(self, parent):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        ttk.Label(frm, text="Motor").grid(row=0, column=0, sticky="w")
-        ttk.Label(frm, text="Current angle").grid(row=0, column=1, sticky="w")
-        ttk.Label(frm, text="Target angle").grid(row=0, column=2, sticky="w")
+        frm.columnconfigure(0, weight=1)
+        goniometer_frame = ttk.LabelFrame(frm, text="Goniometer")
+        goniometer_frame.grid(row=0, column=0, sticky="we", padx=4, pady=4)
+        ttk.Label(goniometer_frame, text="Motor").grid(row=0, column=0, sticky="w")
+        ttk.Label(goniometer_frame, text="Current angle").grid(row=0, column=1, sticky="w")
+        ttk.Label(goniometer_frame, text="Target angle").grid(row=0, column=2, sticky="w")
         for row_idx, (role, label) in enumerate(self.MOTOR_ROLES, start=1):
-            ttk.Label(frm, text=f"{label}:").grid(row=row_idx, column=0, sticky="w")
-            ttk.Entry(frm, textvariable=self.motor_current_vars[role], width=6, state="readonly").grid(
+            ttk.Label(goniometer_frame, text=f"{label}:").grid(row=row_idx, column=0, sticky="w")
+            ttk.Entry(goniometer_frame, textvariable=self.motor_current_vars[role], width=6, state="readonly").grid(
                 row=row_idx, column=1, sticky="w", padx=4
             )
-            target_controls = ttk.Frame(frm)
+            target_controls = ttk.Frame(goniometer_frame)
             target_controls.grid(row=row_idx, column=2, sticky="w", padx=4)
             ttk.Button(target_controls, text="<<", width=3, command=lambda r=role: self._nudge_target(r, -1.0)).grid(
                 row=0, column=0, padx=(0, 2)
@@ -260,12 +259,17 @@ class GoniocontrolGUI(tk.Tk):
             ttk.Button(target_controls, text=">>", width=3, command=lambda r=role: self._nudge_target(r, 1.0)).grid(
                 row=0, column=4
             )
-            drive_btn = ttk.Button(frm, text="Drive", command=lambda r=role: self._drive_motor(r))
+            drive_btn = ttk.Button(goniometer_frame, text="Drive", command=lambda r=role: self._drive_motor(r))
             drive_btn.grid(row=row_idx, column=3, padx=4, pady=2)
-            zero_btn = ttk.Button(frm, text="Set Zero", command=lambda r=role: self._set_motor_zero(r))
+            zero_btn = ttk.Button(goniometer_frame, text="Set Zero", command=lambda r=role: self._set_motor_zero(r))
             zero_btn.grid(row=row_idx, column=4, padx=4, pady=2)
             self.motor_drive_buttons[role] = drive_btn
             self.motor_zero_buttons[role] = zero_btn
+        polarizer_frame = ttk.LabelFrame(frm, text="Polarizer")
+        polarizer_frame.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        ttk.Button(polarizer_frame, text="Calibrate Polarizer", command=self._calibrate_polarizer).grid(
+            row=0, column=0, padx=4, pady=4, sticky="w"
+        )
 
     def _build_plotting_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -278,8 +282,34 @@ class GoniocontrolGUI(tk.Tk):
         self.after(0, lambda: self.busy_var.set("Busy" if busy else "Idle"))
 
     def _startup_refresh(self):
-        self._apply_angles()
-        self._run_preflight()
+        self.controller.run_async(
+            "Startup initialization",
+            self._initialize_on_startup,
+            on_error=self._handle_startup_error,
+        )
+
+    def _initialize_on_startup(self):
+        self.workflow.connect_devices()
+        result = self.workflow.startup_preflight()
+        self.log(f"Preflight: {result}")
+
+    def _handle_startup_error(self, exc: Exception):
+        def show():
+            if self.dry_run:
+                title = "Startup failed in dry run mode"
+            else:
+                title = "Hardware startup failed"
+            messagebox.showerror(
+                title,
+                (
+                    "Automatic hardware initialization failed.\n\n"
+                    f"{exc}\n\n"
+                    "Verify spectrometer connectivity and required motor controllers "
+                    "(zenith, azimuth, sample), then restart the application."
+                ),
+            )
+
+        self.after(0, show)
 
     def _refresh_motor_angles(self):
         if self.controller.is_busy():
@@ -311,10 +341,7 @@ class GoniocontrolGUI(tk.Tk):
     def _run_preflight(self):
         self.state_obj.angles_file = Path(self.angle_var.get())
         result = self.workflow.startup_preflight()
-        self.log(f"Preflight: {result}")
-
-    def _connect_devices(self):
-        self.controller.run_async("Connect devices", self.workflow.connect_devices)
+        self.log(f"Status: {result}")
 
     def _load_runtime_state(self):
         def run():
@@ -454,6 +481,20 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async(f"Set zero for {motor_name}", lambda: self.workflow.set_zero_at_current_position(role))
 
     def _measure(self):
+        angle_path = Path(self.angle_var.get())
+        self.state_obj.angles_file = angle_path
+        if not self.state_obj.angles:
+            try:
+                self.state_obj.angles = self.workflow.persistence.read_angles(angle_path)
+                loaded_positions = len(self.state_obj.angles)
+                self.angles_status_var.set(f"Sequence with {loaded_positions} positions")
+                self.log(f"Loaded {loaded_positions} angle rows from {angle_path}")
+            except Exception as exc:
+                messagebox.showerror("Angles file error", f"Could not load angles file:\n{exc}")
+                return
+        if len(self.state_obj.angles) == 0:
+            messagebox.showerror("Angles required", "Measurement sequence requires at least one angle row.")
+            return
         repeats = int(self.repeats_var.get() or "1")
         self.controller.run_measure(repeats)
 

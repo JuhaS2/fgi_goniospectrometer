@@ -23,7 +23,12 @@ class GuiController:
         self._cancel_event.set()
         self.emit_log("Cancellation requested.")
 
-    def run_async(self, label: str, fn: Callable[[], None]) -> None:
+    def run_async(
+        self,
+        label: str,
+        fn: Callable[[], None],
+        on_error: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
         if self.is_busy():
             self.emit_log("Another operation is already running.")
             return
@@ -37,6 +42,8 @@ class GuiController:
                 self.emit_log(f"Completed: {label}")
             except Exception as exc:
                 self.emit_log(f"Failed: {label}: {exc}")
+                if on_error:
+                    on_error(exc)
             finally:
                 self.emit_busy(False)
 

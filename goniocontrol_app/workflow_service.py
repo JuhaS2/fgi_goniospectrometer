@@ -83,7 +83,21 @@ class WorkflowService:
         self.state.devices.motors = motors
         self.state.devices.sample_rotator_present = "sample" in motors
         self.state.devices.connected_lcc = self.lcc.enabled
-        greeting = self.spectrometer.connect()
+        required_motors = {"zenith", "azimuth", "sample"}
+        missing_motors = sorted(required_motors - set(motors.keys()))
+        if missing_motors:
+            raise PreconditionError(
+                "Missing required motor controllers: "
+                + ", ".join(missing_motors)
+                + ". Optional polarizer controllers may be absent."
+            )
+
+        try:
+            greeting = self.spectrometer.connect()
+        except Exception as exc:
+            raise PreconditionError(
+                "Could not connect to spectrometer at configured host/port."
+            ) from exc
         self.state.devices.connected_spectrometer = bool(greeting)
 
         for role in ["zenith", "azimuth", "sample", "sensor_polarizer", "lamp_polarizer"]:
