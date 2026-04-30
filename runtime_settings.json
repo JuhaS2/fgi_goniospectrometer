@@ -1,5 +1,5 @@
 {
-  "outfile": "C:\\Temp\\gonio_data_folder\\Test11.pickle",
+  "outfile": "C:\\Temp\\gonio_data_folder\\Test22.pickle",
   "angles_file": "C:\\git\\fgi_goniospectrometer\\Angles_PanelReflCalib.txt",
-  "reflectance_mode": true
+  "reflectance_mode": false
 }

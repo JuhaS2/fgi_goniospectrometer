@@ -67,6 +67,7 @@ class GoniocontrolGUI(tk.Tk):
         self.optimize_zenith_var = tk.StringVar(value="0")
         self.white_ref_zenith_var = tk.StringVar(value="0")
         self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
+        self.white_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.motor_labels = dict(self.MOTOR_ROLES)
         self.motor_current_vars = {role: tk.StringVar(value="N/A") for role, _ in self.MOTOR_ROLES}
         self.motor_target_vars = {role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES}
@@ -140,8 +141,11 @@ class GoniocontrolGUI(tk.Tk):
         calibration_frame = self._build_measurement_calibration_frame(frm)
         calibration_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
 
+        manual_frame = self._build_manual_measurement_frame(frm)
+        manual_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
+
         sequence_frame = self._build_measurement_sequence_frame(frm)
-        sequence_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
+        sequence_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
 
         frm.columnconfigure(1, weight=1)
         sequence_frame.columnconfigure(1, weight=1)
@@ -171,8 +175,11 @@ class GoniocontrolGUI(tk.Tk):
         return output_frame
 
     def _build_measurement_calibration_frame(self, parent):
-        calibration_frame = ttk.LabelFrame(parent, text="Spectrometer")
-        ttk.Button(calibration_frame, text="Optimize", command=self._optimize).grid(row=0, column=0, padx=4, pady=4, sticky="w")
+        calibration_frame = ttk.LabelFrame(parent, text="Spectrometer Config")
+        calibration_button_width = 16
+        ttk.Button(calibration_frame, text="Optimize", command=self._optimize, width=calibration_button_width).grid(
+            row=0, column=0, padx=4, pady=4, sticky="w"
+        )
         ttk.Label(calibration_frame, text="Sensor Zen").grid(row=0, column=1, sticky="w", padx=(12, 4))
         ttk.Entry(calibration_frame, textvariable=self.optimize_zenith_var, width=10).grid(row=0, column=2, sticky="w", padx=4)
         ttk.Label(
@@ -181,17 +188,21 @@ class GoniocontrolGUI(tk.Tk):
             font=self.angles_status_font,
         ).grid(row=0, column=3, sticky="w", padx=(10, 4))
 
-        ttk.Button(calibration_frame, text="Dark Current", command=self._dark).grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        ttk.Button(calibration_frame, text="Dark Current", command=self._dark, width=calibration_button_width).grid(
+            row=1, column=0, padx=4, pady=4, sticky="w"
+        )
         ttk.Label(calibration_frame, textvariable=self.dark_last_measured_var, font=self.angles_status_font).grid(
-            row=1, column=1, columnspan=3, sticky="w", padx=(12, 4)
+            row=1, column=3, sticky="w", padx=(10, 4)
         )
 
-        white_row = ttk.Frame(calibration_frame)
-        white_row.grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=4)
-        ttk.Button(white_row, text="White Reference (Start)", command=self._white).grid(row=0, column=0, padx=(0, 6), sticky="w")
-        ttk.Button(white_row, text="White Reference (End)", command=self._ending_white).grid(row=0, column=1, padx=(0, 12), sticky="w")
-        ttk.Label(white_row, text="Sensor Zen").grid(row=0, column=2, sticky="w", padx=(0, 4))
-        ttk.Entry(white_row, textvariable=self.white_ref_zenith_var, width=10).grid(row=0, column=3, sticky="w")
+        ttk.Button(calibration_frame, text="White Reference", command=self._white, width=calibration_button_width).grid(
+            row=2, column=0, padx=4, pady=4, sticky="w"
+        )
+        ttk.Label(calibration_frame, text="Sensor Zen").grid(row=2, column=1, sticky="w", padx=(12, 4))
+        ttk.Entry(calibration_frame, textvariable=self.white_ref_zenith_var, width=10).grid(row=2, column=2, sticky="w", padx=4)
+        ttk.Label(calibration_frame, textvariable=self.white_last_measured_var, font=self.angles_status_font).grid(
+            row=2, column=3, sticky="w", padx=(10, 4)
+        )
 
         return calibration_frame
 
@@ -216,9 +227,9 @@ class GoniocontrolGUI(tk.Tk):
 
         button_row = ttk.Frame(sequence_frame)
         button_row.grid(row=3, column=1, columnspan=2, pady=(10, 0))
-        button_width = 24
+        button_width = 40
         ttk.Button(
-            button_row, text="Start Measurent Sequence", command=self._measure, style="TallMeasure.TButton", width=button_width
+            button_row, text="Collect Measurement Sequence", command=self._measure, style="TallMeasure.TButton", width=button_width
         ).grid(row=0, column=0, padx=(0, 6))
         ttk.Button(
             button_row,
@@ -228,6 +239,20 @@ class GoniocontrolGUI(tk.Tk):
             width=button_width,
         ).grid(row=0, column=1)
         return sequence_frame
+
+    def _build_manual_measurement_frame(self, parent):
+        manual_frame = ttk.LabelFrame(parent, text="Manual measurement")
+        style = ttk.Style()
+        style.configure("TallMeasure.TButton", padding=(8, 10))
+        manual_frame.columnconfigure(0, weight=1)
+        ttk.Button(
+            manual_frame,
+            text="Collect Single Spectrum",
+            command=self._measure_single_current_position,
+            style="TallMeasure.TButton",
+            width=40,
+        ).grid(row=0, column=0, padx=6, pady=6)
+        return manual_frame
 
     def _build_motors_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -443,8 +468,13 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Collect dark", run)
 
     def _white(self):
-        za = float(self.white_ref_zenith_var.get() or "0")
-        self.controller.run_async("Collect white", lambda: self.workflow.collect_white(za))
+        def run():
+            za = float(self.white_ref_zenith_var.get() or "0")
+            self.workflow.collect_white(za)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.after(0, lambda: self.white_last_measured_var.set(f"Last collection: {timestamp}"))
+
+        self.controller.run_async("Collect white", run)
 
     def _ending_white(self):
         za = float(self.white_ref_zenith_var.get() or "0")
@@ -512,6 +542,44 @@ class GoniocontrolGUI(tk.Tk):
             return
         repeats = int(self.repeats_var.get() or "1")
         self.controller.run_measure(repeats)
+
+    def _measure_single_current_position(self):
+        try:
+            sensor_pol = self.workflow.get_motor_angle_from_zero("sensor_polarizer")
+        except Exception:
+            sensor_pol = 0.0
+        try:
+            lamp_pol = self.workflow.get_motor_angle_from_zero("lamp_polarizer")
+        except Exception:
+            lamp_pol = 0.0
+        try:
+            zenith = self.workflow.get_motor_angle_from_zero("zenith")
+            azimuth = self.workflow.get_motor_angle_from_zero("azimuth")
+            sample = self.workflow.get_motor_angle_from_zero("sample")
+        except Exception as exc:
+            messagebox.showerror("Manual measurement unavailable", f"Could not read current motor angles:\n{exc}")
+            return
+
+        angle_row = (sensor_pol, lamp_pol, zenith, azimuth, sample, 0.0, 1.0)
+        previous_angles = list(self.state_obj.angles)
+        self.log(
+            "Manual single-spectrum at current position: "
+            f"sz={sensor_pol:.2f}, sa00={lamp_pol:.2f}, "
+            f"ze={zenith:.2f}, az={azimuth:.2f}, sample={sample:.2f}"
+        )
+        self.state_obj.angles = [angle_row]
+
+        def run_manual_measure():
+            try:
+                self.workflow.measure_sequence(
+                    repeats=1,
+                    progress=self.log,
+                    should_cancel=self.controller._cancel_event.is_set,
+                )
+            finally:
+                self.state_obj.angles = previous_angles
+
+        self.controller.run_async("Manual single spectrum", run_manual_measure)
 
     def _view(self):
         self.controller.run_async("View snapshot", self.workflow.view_snapshot)
