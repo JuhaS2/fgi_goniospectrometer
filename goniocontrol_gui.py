@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -55,14 +56,16 @@ class GoniocontrolGUI(tk.Tk):
         self.controller = GuiController(self.workflow, self.log, self._set_busy)
 
         self.busy_var = tk.StringVar(value="Idle")
-        self.reflectance_var = tk.BooleanVar(value=True)
+        self.save_format_var = tk.StringVar(value="reflectance" if self.state_obj.reflectance_mode else "radiance")
         default_outfile = str((self.workspace / "Test00.pickle").resolve())
         self.outfile_var = tk.StringVar(value=default_outfile)
         self.state_obj.outfile = default_outfile
         self.angle_var = tk.StringVar(value=str(self.workspace / "Angles.txt"))
         self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
         self.repeats_var = tk.StringVar(value="1")
-        self.white_zenith_var = tk.StringVar(value="0")
+        self.optimize_zenith_var = tk.StringVar(value="0")
+        self.white_ref_zenith_var = tk.StringVar(value="0")
+        self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.motor_labels = dict(self.MOTOR_ROLES)
         self.motor_current_vars = {role: tk.StringVar(value="N/A") for role, _ in self.MOTOR_ROLES}
         self.motor_target_vars = {role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES}
@@ -131,16 +134,54 @@ class GoniocontrolGUI(tk.Tk):
         output_frame.grid(row=0, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
         ttk.Entry(output_frame, textvariable=self.outfile_var, width=60).grid(row=0, column=0, sticky="we", padx=6, pady=4)
         ttk.Button(output_frame, text="Browse", command=self._browse_output_file).grid(row=0, column=1, padx=4, pady=4)
-        ttk.Checkbutton(
-            output_frame,
-            text="Reflectance mode (uncheck for radiance)",
-            variable=self.reflectance_var,
+        format_row = ttk.Frame(output_frame)
+        format_row.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
+        ttk.Label(format_row, text="Save format:").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            format_row,
+            text="reflectance",
+            value="reflectance",
+            variable=self.save_format_var,
             command=self._toggle_mode,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
+        ).grid(row=0, column=1, padx=(10, 10))
+        ttk.Radiobutton(
+            format_row,
+            text="radiance",
+            value="radiance",
+            variable=self.save_format_var,
+            command=self._toggle_mode,
+        ).grid(row=0, column=2)
         output_frame.columnconfigure(0, weight=1)
 
+        calibration_frame = ttk.LabelFrame(frm, text="Calibration")
+        calibration_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
+        ttk.Button(calibration_frame, text="Optimize", command=self._optimize).grid(row=0, column=0, padx=4, pady=4, sticky="w")
+        ttk.Label(calibration_frame, text="Sensor Zen").grid(row=0, column=1, sticky="w", padx=(12, 4))
+        ttk.Entry(calibration_frame, textvariable=self.optimize_zenith_var, width=10).grid(row=0, column=2, sticky="w", padx=4)
+        ttk.Label(
+            calibration_frame,
+            text="Not optimized yet!",
+            font=self.angles_status_font,
+        ).grid(row=0, column=3, sticky="w", padx=(10, 4))
+
+        ttk.Button(calibration_frame, text="Dark Current", command=self._dark).grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        ttk.Label(calibration_frame, textvariable=self.dark_last_measured_var, font=self.angles_status_font).grid(
+            row=1, column=1, columnspan=3, sticky="w", padx=(12, 4)
+        )
+
+        white_row = ttk.Frame(calibration_frame)
+        white_row.grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=4)
+        ttk.Button(white_row, text="White Reference (Start)", command=self._white).grid(row=0, column=0, padx=(0, 6), sticky="w")
+        ttk.Button(white_row, text="White Reference (End)", command=self._ending_white).grid(row=0, column=1, padx=(0, 12), sticky="w")
+        ttk.Label(white_row, text="Sensor Zen").grid(row=0, column=2, sticky="w", padx=(0, 4))
+        ttk.Entry(white_row, textvariable=self.white_ref_zenith_var, width=10).grid(row=0, column=3, sticky="w")
+
+        ttk.Button(calibration_frame, text="Calibrate Polarizer", command=self._calibrate_polarizer).grid(
+            row=3, column=0, padx=4, pady=4, sticky="w"
+        )
+
         sequence_frame = ttk.LabelFrame(frm, text="Measurement Sequence")
-        sequence_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
+        sequence_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
 
         ttk.Label(sequence_frame, text="Angles file:").grid(row=0, column=0, sticky="w")
         ttk.Entry(sequence_frame, textvariable=self.angle_var, width=60, state="readonly").grid(
@@ -161,13 +202,13 @@ class GoniocontrolGUI(tk.Tk):
 
         button_row = ttk.Frame(sequence_frame)
         button_row.grid(row=3, column=1, columnspan=2, pady=(10, 0))
-        button_width = 16
+        button_width = 24
         ttk.Button(
-            button_row, text="Start Measure", command=self._measure, style="TallMeasure.TButton", width=button_width
+            button_row, text="Start Measurent Sequence", command=self._measure, style="TallMeasure.TButton", width=button_width
         ).grid(row=0, column=0, padx=(0, 6))
         ttk.Button(
             button_row,
-            text="Abort Measure",
+            text="Abort Measurement Sequence",
             command=self.controller.cancel,
             style="TallMeasure.TButton",
             width=button_width,
@@ -178,13 +219,6 @@ class GoniocontrolGUI(tk.Tk):
     def _build_calibration_panel(self, parent):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        ttk.Label(frm, text="Zen angle during WhiteReference/Optimize:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=self.white_zenith_var, width=20).grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Button(frm, text="Optimize", command=self._optimize).grid(row=1, column=0, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="Dark Current", command=self._dark).grid(row=1, column=1, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="White Reference (Start)", command=self._white).grid(row=2, column=0, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="White Reference (End)", command=self._ending_white).grid(row=2, column=1, padx=4, pady=4, sticky="w")
-        ttk.Button(frm, text="Calibrate Polarizer", command=self._calibrate_polarizer).grid(row=2, column=2, padx=4, pady=4, sticky="w")
 
     def _build_motors_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -334,7 +368,7 @@ class GoniocontrolGUI(tk.Tk):
 
     def _toggle_mode(self):
         # Keep both GUI and backend mode aligned.
-        desired = self.reflectance_var.get()
+        desired = self.save_format_var.get() == "reflectance"
         if self.state_obj.reflectance_mode != desired:
             self.workflow.toggle_mode()
         self.log(f"Mode => {'Reflectance' if self.state_obj.reflectance_mode else 'Radiance'}")
@@ -343,22 +377,27 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Restore spectrometer", self.workflow.restore_spectrometer)
 
     def _optimize(self):
-        za = float(self.white_zenith_var.get() or "0")
+        za = float(self.optimize_zenith_var.get() or "0")
         self.controller.run_async("Optimize", lambda: self.workflow.optimize(za, progress=self.log))
 
     def _dark(self):
-        self.controller.run_async("Collect dark", self.workflow.collect_dark)
+        def run():
+            self.workflow.collect_dark()
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.after(0, lambda: self.dark_last_measured_var.set(f"Last collection: {timestamp}"))
+
+        self.controller.run_async("Collect dark", run)
 
     def _white(self):
-        za = float(self.white_zenith_var.get() or "0")
+        za = float(self.white_ref_zenith_var.get() or "0")
         self.controller.run_async("Collect white", lambda: self.workflow.collect_white(za))
 
     def _ending_white(self):
-        za = float(self.white_zenith_var.get() or "0")
+        za = float(self.white_ref_zenith_var.get() or "0")
         self.controller.run_async("Collect ending white", lambda: self.workflow.collect_ending_white(za))
 
     def _calibrate_polarizer(self):
-        za = float(self.white_zenith_var.get() or "0")
+        za = float(self.white_ref_zenith_var.get() or "0")
         self.controller.run_async("Calibrate polarizer", lambda: self.workflow.calibrate_polarizer(za, progress=self.log))
 
     def _format_angle(self, angle: float) -> str:
