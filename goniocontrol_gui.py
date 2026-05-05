@@ -484,7 +484,7 @@ class GoniocontrolGUI(tk.Tk):
         za = float(self.white_ref_zenith_var.get() or "0")
         self.controller.run_async("Calibrate polarizer", lambda: self.workflow.calibrate_polarizer(za, progress=self.log))
 
-    def _format_angle(self, angle: float) -> str:
+    def _format_angle(self, angle):
         return "{:+.2f}°".format(angle)
 
     def _nudge_target(self, role: str, delta):
