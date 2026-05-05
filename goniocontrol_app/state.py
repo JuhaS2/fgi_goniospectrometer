@@ -11,10 +11,10 @@ AngleRow = Tuple[float, float, float, float, float, float, float]
 
 @dataclass
 class PositionState:
-    step_position = 0
-    microstep_position = 0
-    calibrated_position = 0.0
-    encoder_position = 0.0
+    step_position: int = 0
+    microstep_position: int = 0
+    calibrated_position: float = 0.0
+    encoder_position: float = 0.0
 
 
 @dataclass
@@ -26,37 +26,37 @@ class MotorIdentity:
 
 @dataclass
 class CalibrationState:
-    dark_current = None
-    drift_dark = None
-    dark_remainder = None
-    white = None
-    aa = None
-    ending_white = None
-    wr_zenith = None
-    wr_end_zenith = None
-    optimizer_header = None
+    dark_current: Any = None
+    drift_dark: Any = None
+    dark_remainder: Any = None
+    white: Any = None
+    aa: Any = None
+    ending_white: Any = None
+    wr_zenith: Any = None
+    wr_end_zenith: Any = None
+    optimizer_header: Any = None
 
 
 @dataclass
 class DeviceState:
-    npols = 1
-    sample_rotator_present = False
-    motors = field(default_factory=dict)
-    positions_zero = field(default_factory=dict)
-    positions_current = field(default_factory=dict)
-    connected_spectrometer = False
-    connected_lcc = False
+    npols: int = 1
+    sample_rotator_present: bool = False
+    motors: Dict[str, MotorIdentity] = field(default_factory=dict)
+    positions_zero: Dict[str, PositionState] = field(default_factory=dict)
+    positions_current: Dict[str, PositionState] = field(default_factory=dict)
+    connected_spectrometer: bool = False
+    connected_lcc: bool = False
 
 
 @dataclass
 class AppState:
     workspace: Path
-    outfile = "Test00"
-    reflectance_mode = True
-    angles_file = field(default_factory=lambda: Path("Angles.txt"))
-    angles = field(default_factory=list)
-    data = field(default_factory=list)
-    runtime_notice = None
-    calibration = field(default_factory=CalibrationState)
-    devices = field(default_factory=DeviceState)
+    outfile: str = "Test00"
+    reflectance_mode: bool = True
+    angles_file: Path = field(default_factory=lambda: Path("Angles.txt"))
+    angles: List[AngleRow] = field(default_factory=list)
+    data: List[np.ndarray] = field(default_factory=list)
+    runtime_notice: Optional[str] = None
+    calibration: CalibrationState = field(default_factory=CalibrationState)
+    devices: DeviceState = field(default_factory=DeviceState)
 
