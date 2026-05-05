@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -42,8 +43,25 @@ class PersistenceService:
     def load_optional_array(self, filename: str):
         path = self.workspace / filename
         if path.exists():
-            return np.load(path, allow_pickle=True)
+            try:
+                return np.load(path, allow_pickle=True)
+            except ModuleNotFoundError as exc:
+                # Legacy pickled object arrays can reference old/broken NumPy module paths.
+                if not self._install_numpy_compat_aliases(exc):
+                    raise
+                return np.load(path, allow_pickle=True)
         return None
+
+    @staticmethod
+    def _install_numpy_compat_aliases(exc: ModuleNotFoundError) -> bool:
+        missing = str(exc)
+        if "numpy_.core" not in missing and "numpy._core" not in missing:
+            return False
+        # Map legacy or typo module names to current NumPy modules for unpickling.
+        sys.modules.setdefault("numpy_", np)
+        sys.modules.setdefault("numpy_.core", np.core)
+        sys.modules.setdefault("numpy._core", np.core)
+        return True
 
     def save_array(self, filename: str, data) -> None:
         np.save(self.workspace / filename, data)

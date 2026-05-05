@@ -304,7 +304,7 @@ class GoniocontrolGUI(tk.Tk):
         ttk.Button(frm, text="Plot Current Data", command=self._plot).pack(side=tk.LEFT, padx=4, pady=4)
         ttk.Button(frm, text="VNIR Info", command=self._vnir_info).pack(side=tk.LEFT, padx=4, pady=4)
 
-    def _set_busy(self, busyF):
+    def _set_busy(self, busy):
         self.after(0, lambda: self.busy_var.set("Busy" if busy else "Idle"))
 
     def _startup_refresh(self):
