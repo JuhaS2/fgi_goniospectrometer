@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 class GoniocontrolError(Exception):
     """Base exception for goniocontrol application."""
 
