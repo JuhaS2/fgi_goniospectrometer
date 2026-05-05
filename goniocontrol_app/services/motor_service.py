@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from ctypes import POINTER, byref, c_int, c_uint, cast
 from dataclasses import dataclass
 from typing import Dict, Optional

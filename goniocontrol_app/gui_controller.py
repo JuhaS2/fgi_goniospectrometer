@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from __future__ import annotations
-
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Optional
