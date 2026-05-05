@@ -10,7 +10,15 @@ import scipy.linalg
 import scipy
 import time
 from struct import unpack
-from LCClib import NRets, LCCwl,RetStep#,SpectralRetardances
+try:
+    from LCClib import NRets, LCCwl, RetStep  # ,SpectralRetardances
+except Exception as exc:
+    # LCC is optional for runs without retardance hardware.
+    # Avoid import-time hard failure from LCClib side effects/dependencies.
+    print("ASDlib: LCClib unavailable ({}: {}), continuing without LCC.".format(type(exc).__name__, exc))
+    NRets = 0
+    LCCwl = []
+    RetStep = 0.0
 
 Nwl=2151
 Vwl1=350

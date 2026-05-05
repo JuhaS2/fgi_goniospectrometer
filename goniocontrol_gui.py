@@ -239,7 +239,7 @@ class GoniocontrolGUI(tk.Tk):
 
         button_row = ttk.Frame(sequence_frame)
         button_row.grid(row=3, column=1, columnspan=2, pady=(10, 0))
-        button_width = 40
+        button_width = 30
         ttk.Button(
             button_row, text="Collect Measurement Sequence", command=self._measure, style="TallMeasure.TButton", width=button_width
         ).grid(row=0, column=0, padx=(0, 6))

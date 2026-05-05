@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import threading
+import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Optional
 
@@ -41,6 +42,11 @@ class GuiController:
                 self.emit_log("Completed: {}".format(label))
             except Exception as exc:
                 self.emit_log("Failed: {}: {}".format(label, exc))
+                self.emit_log("Failure type: {}".format(type(exc).__name__))
+                tb = traceback.format_exc()
+                self.emit_log("Traceback:\n{}".format(tb))
+                print("=== Async task failure: {} ===".format(label))
+                print(tb)
                 if on_error:
                     on_error(exc)
             finally:
