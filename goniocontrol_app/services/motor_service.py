@@ -36,8 +36,8 @@ class MotorService:
     def __init__(self):
         self.handles: Dict[str, MotorHandle] = {}
 
-    def discover(self) -> Dict[str, MotorIdentity]:
-        discovered: Dict[str, MotorIdentity] = {}
+    def discover(self):
+        discovered = {}
         for name in self.SCAN_NAMES:
             encoded = name.encode()
             device_id = lib.open_device(encoded)
@@ -60,7 +60,7 @@ class MotorService:
             self.handles[role] = MotorHandle(identity=identity, calibration=calibration)
         return discovered
 
-    def _configure_motion(self, role: str, device_id) -> None:
+    def _configure_motion(self, role, device_id):
         if role not in {"sample", "zenith", "azimuth"}:
             return
         move = move_settings_t()
@@ -70,13 +70,13 @@ class MotorService:
             move.Speed = 1000
         lib.set_move_settings(device_id, byref(move))
 
-    def _role_from_serial(self, serial: int) -> Optional[str]:
+    def _role_from_serial(self, serial):
         for role, expected in self.SERIALS.items():
             if serial == expected:
                 return role
         return None
 
-    def get_position(self, role: str) -> PositionState:
+    def get_position(self, role):
         handle = self.handles[role]
         p_steps = get_position_t()
         p_cal = get_position_calb_t()
@@ -89,22 +89,22 @@ class MotorService:
             encoder_position=p_cal.EncPosition,
         )
 
-    def move_deg_from_zero(self, role: str, deg: float, zero: PositionState) -> None:
+    def move_deg_from_zero(self, role, deg, zero):
         handle = self.handles[role]
         target = int(deg * 100 + zero.step_position)
         lib.command_move(handle.identity.device_id, target, zero.microstep_position)
 
-    def move_to_zero(self, role: str, zero: PositionState) -> None:
+    def move_to_zero(self, role, zero):
         handle = self.handles[role]
         lib.command_move(handle.identity.device_id, int(zero.step_position), zero.microstep_position)
 
-    def wait(self, role: str, timeout_ms: int = 10) -> None:
+    def wait(self, role, timeout_ms= 10):
         handle = self.handles[role]
         result = lib.command_wait_for_stop(handle.identity.device_id, timeout_ms)
         if result != 0:
             raise RecoverableHardwareError("Motor {} stop wait returned {}".format(role, result))
 
-    def close_all(self) -> None:
+    def close_all(self):
         for handle in self.handles.values():
             lib.close_device(byref(cast(handle.identity.device_id, POINTER(c_int))))
 

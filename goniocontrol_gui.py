@@ -488,7 +488,7 @@ class GoniocontrolGUI(tk.Tk):
     def _format_angle(self, angle):
         return "{:+.2f}°".format(angle)
 
-    def _nudge_target(self, role: str, delta):
+    def _nudge_target(self, role, delta):
         raw = self.motor_target_vars[role].get().strip()
         try:
             current = float(raw) if raw else 0.0

@@ -17,7 +17,7 @@ class LCCService:
             self.retardances = getattr(LCClib, "retardances", [])
             self.enabled = self.lcc is not None
 
-    def set_retardance(self, value: float) -> None:
+    def set_retardance(self, value):
         if not self.enabled:
             return
         self.lcc.write("RE={}".format(value))

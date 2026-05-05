@@ -71,15 +71,15 @@ class WorkflowService:
         self.spectrometer = spectrometer
         self.lcc = lcc
 
-    def startup_preflight(self) -> Dict[str, str]:
-        result: Dict[str, str] = {}
+    def startup_preflight(self):
+        result = {}
         angle_path = self.resolve_path(self.state.angles_file)
         result["angles_file"] = "ok" if angle_path.exists() else "missing"
         for name in ["DC.npy", "DriftDC.npy", "Oheader.npy"]:
             result[name] = "ok" if (self.state.workspace / name).exists() else "missing"
         return result
 
-    def connect_devices(self) -> None:
+    def connect_devices(self):
         motors = self.motors.discover()
         self.state.devices.motors = motors
         self.state.devices.sample_rotator_present = "sample" in motors
@@ -114,7 +114,7 @@ class WorkflowService:
         else:
             self.state.devices.npols = 3
 
-    def load_runtime_state(self) -> None:
+    def load_runtime_state(self):
         self.load_runtime_settings()
         self.state.runtime_notice = None
         vwl1, _, vdcc = self.spectrometer.vnir_info()
@@ -147,7 +147,7 @@ class WorkflowService:
         self._vdcc = vdcc
         self._wl = vwl1 + np.arange(Nwl)
 
-    def load_runtime_settings(self) -> None:
+    def load_runtime_settings(self):
         defaults = {
             "outfile": self.state.outfile,
             "angles_file": str(self.state.angles_file),
@@ -158,7 +158,7 @@ class WorkflowService:
         self.state.angles_file = Path(str(settings["angles_file"]))
         self.state.reflectance_mode = bool(settings["reflectance_mode"])
 
-    def save_runtime_settings(self) -> None:
+    def save_runtime_settings(self):
         self.persistence.save_runtime_settings(
             outfile=self.state.outfile,
             angles_file=self.state.angles_file,
@@ -176,7 +176,7 @@ class WorkflowService:
             self.state.calibration.aa = self.persistence.load_optional_array("AA44.npy")
             self.state.calibration.white = self.persistence.load_optional_array("White44.npy")
 
-    def new_dataset(self, outfile: str) -> None:
+    def new_dataset(self, outfile):
         candidate = Path((outfile or "").strip() or "Test00.pickle")
         if candidate.suffix.lower() != ".pickle":
             candidate = candidate.with_suffix(".pickle")
@@ -188,14 +188,14 @@ class WorkflowService:
         os.makedirs(Path(self.state.outfile).parent, exist_ok=True)
         self.state.data = []
 
-    def restore_spectrometer(self) -> None:
+    def restore_spectrometer(self):
         self.spectrometer.restore()
         self.spectrometer.vnir_info()
 
     def show_vnir_info(self):
         return self.spectrometer.vnir_info()
 
-    def optimize(self, wr_zenith: float, progress: Optional[ProgressFn] = None) -> None:
+    def optimize(self, wr_zenith, progress= None):
         self.go_zenith(wr_zenith)
         for idx in range(25):
             header = self.spectrometer.optimize()
@@ -206,7 +206,7 @@ class WorkflowService:
         self.state.calibration.optimizer_header = np.array(header, dtype=object)
         self.persistence.save_array("Oheader.npy", self.state.calibration.optimizer_header)
 
-    def collect_dark(self) -> None:
+    def collect_dark(self):
         header, dc = self.spectrometer.read_average(25)
         drift = header[22]
         idata = self._take_i(repeats=25)
@@ -218,7 +218,7 @@ class WorkflowService:
         self.persistence.save_array("DriftDC.npy", drift)
         self.persistence.save_array("DC_remainder.npy", dc_remainder)
 
-    def collect_white(self, wr_zenith: float) -> None:
+    def collect_white(self, wr_zenith):
         self._require_dark()
         self.go_zenith(wr_zenith)
         npols = self.state.devices.npols
@@ -248,7 +248,7 @@ class WorkflowService:
         self.state.calibration.wr_zenith = wr_zenith
         self.persistence.save_array("WRZA.npy", wr_zenith)
 
-    def collect_ending_white(self, wr_zenith: float) -> None:
+    def collect_ending_white(self, wr_zenith):
         self._require_white()
         self.go_zenith(wr_zenith)
         npols = self.state.devices.npols
@@ -270,7 +270,7 @@ class WorkflowService:
         self.state.calibration.wr_end_zenith = wr_zenith
         self.persistence.save_array("WRZAE.npy", wr_zenith)
 
-    def calibrate_polarizer(self, forward_zenith: float, progress: Optional[ProgressFn] = None) -> None:
+    def calibrate_polarizer(self, forward_zenith, progress= None):
         if self.state.devices.npols == 1:
             raise PreconditionError("Polarizer calibration requires polarizer hardware.")
         self.go_zenith(forward_zenith)
@@ -279,17 +279,17 @@ class WorkflowService:
         if progress:
             progress("Polarizer calibration sequence collected (manual calibration model not defined in source).")
 
-    def go_zenith(self, angle_deg: float) -> None:
+    def go_zenith(self, angle_deg):
         zero = self.state.devices.positions_zero["zenith"]
         self.motors.move_deg_from_zero("zenith", angle_deg, zero)
         self.motors.wait("zenith")
 
-    def refresh_motor_position(self, role: str) -> None:
+    def refresh_motor_position(self, role):
         if role not in self.motors.handles:
             raise PreconditionError("Motor '{}' is not available.".format(role))
         self.state.devices.positions_current[role] = self.motors.get_position(role)
 
-    def get_motor_angle_from_zero(self, role: str) -> float:
+    def get_motor_angle_from_zero(self, role):
         if role not in self.state.devices.positions_zero:
             raise PreconditionError("Motor '{}' has no zero reference.".format(role))
         if role not in self.state.devices.positions_current:
@@ -298,7 +298,7 @@ class WorkflowService:
         zero = self.state.devices.positions_zero[role]
         return (current.step_position - zero.step_position) / self.MOTOR_STEP_SCALE
 
-    def drive_motor_to_angle(self, role: str, angle_deg: float) -> None:
+    def drive_motor_to_angle(self, role, angle_deg):
         if role not in self.state.devices.positions_zero:
             raise PreconditionError("Motor '{}' has no zero reference.".format(role))
         zero = self.state.devices.positions_zero[role]
@@ -306,21 +306,21 @@ class WorkflowService:
         self.motors.wait(role)
         self.refresh_motor_position(role)
 
-    def set_zero_at_current_position(self, role: str) -> None:
+    def set_zero_at_current_position(self, role):
         self.refresh_motor_position(role)
         self.state.devices.positions_zero[role] = self.state.devices.positions_current[role]
 
-    def zero_all(self) -> None:
+    def zero_all(self):
         for role in ["azimuth", "zenith", "sample", "sensor_polarizer", "lamp_polarizer"]:
             if role in self.state.devices.positions_zero:
                 self.motors.move_to_zero(role, self.state.devices.positions_zero[role])
 
-    def toggle_mode(self) -> bool:
+    def toggle_mode(self):
         self.state.reflectance_mode = not self.state.reflectance_mode
         self.save_runtime_settings()
         return self.state.reflectance_mode
 
-    def view_snapshot(self) -> None:
+    def view_snapshot(self):
         self._require_white()
         if self.state.devices.npols == 1:
             vdata = self._take_i(repeats=1)
@@ -332,7 +332,7 @@ class WorkflowService:
             plt.savefig(self.state.workspace / "GonioViews.png")
             plt.close()
 
-    def plot_current_data(self) -> None:
+    def plot_current_data(self):
         if not self.state.data:
             raise PreconditionError("No data to plot.")
         datum = self.state.data[-1]
@@ -346,8 +346,8 @@ class WorkflowService:
     def measure_sequence(
         self,
         repeats: int,
-        progress: Optional[ProgressFn] = None,
-        should_cancel: Optional[ShouldCancelFn] = None,
+        progress = None,
+        should_cancel = None,
     ) -> None:
         self._require_measure_preconditions()
         total = len(self.state.angles)
@@ -367,12 +367,12 @@ class WorkflowService:
         self.zero_all()
         self.persistence.checkpoint_dataset(self.state.outfile, self.state.data)
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         self.persistence.export_text(self.state)
         self.spectrometer.close()
         self.motors.close_all()
 
-    def _move_measurement_axes(self, ze: float, az: float, be: float) -> None:
+    def _move_measurement_axes(self, ze, az, be):
         self.motors.move_deg_from_zero("azimuth", az, self.state.devices.positions_zero["azimuth"])
         self.motors.move_deg_from_zero("zenith", ze, self.state.devices.positions_zero["zenith"])
         if self.state.devices.sample_rotator_present and "sample" in self.state.devices.positions_zero:
@@ -380,7 +380,7 @@ class WorkflowService:
         self.motors.wait("zenith")
         self.motors.wait("azimuth")
 
-    def _measure_at_angle(self, repeats: int):
+    def _measure_at_angle(self, repeats):
         npols = self.state.devices.npols
         if npols == 16:
             subdata = self._take_pol_sequence_44()
@@ -396,7 +396,7 @@ class WorkflowService:
             rr = MakeRef(ss, self.state.calibration.white)
         return ss, rr
 
-    def _take_i(self, repeats: int = 1):
+    def _take_i(self, repeats= 1):
         header, spectrum = self.spectrometer.read_average(repeats)
         drift = header[22]
         return [(0.0, 0.0, spectrum, drift)]
@@ -427,13 +427,13 @@ class WorkflowService:
         self._move_lamp_polarizer(0)
         return subdata
 
-    def _move_sensor_polarizer(self, angle_deg: float):
+    def _move_sensor_polarizer(self, angle_deg):
         if "sensor_polarizer" not in self.state.devices.positions_zero:
             return
         self.motors.move_deg_from_zero("sensor_polarizer", angle_deg, self.state.devices.positions_zero["sensor_polarizer"])
         self.motors.wait("sensor_polarizer")
 
-    def _move_lamp_polarizer(self, angle_deg: float):
+    def _move_lamp_polarizer(self, angle_deg):
         if "lamp_polarizer" not in self.state.devices.positions_zero:
             return
         self.motors.move_deg_from_zero("lamp_polarizer", angle_deg, self.state.devices.positions_zero["lamp_polarizer"])
@@ -470,6 +470,6 @@ class WorkflowService:
         hdr = self.state.calibration.optimizer_header
         self.spectrometer.set_opt(hdr[2], hdr[3], hdr[4])
 
-    def resolve_path(self, path: Path) -> Path:
+    def resolve_path(self, path):
         return path if path.is_absolute() else self.state.workspace / path
 

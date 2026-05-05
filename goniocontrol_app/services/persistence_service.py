@@ -12,10 +12,10 @@ from goniocontrol_app.state import AngleRow, AppState
 
 
 class PersistenceService:
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace):
         self.workspace = workspace
 
-    def _resolve_outfile_path(self, outfile: str) -> Path:
+    def _resolve_outfile_path(self, outfile):
         raw = (outfile or "").strip() or "Test00"
         path = Path(raw)
         if not path.is_absolute():
@@ -24,9 +24,9 @@ class PersistenceService:
             path = path.with_suffix(".pickle")
         return path.resolve()
 
-    def read_angles(self, angle_file: Path) -> List[AngleRow]:
+    def read_angles(self, angle_file):
         path = angle_file if angle_file.is_absolute() else self.workspace / angle_file
-        rows: List[AngleRow] = []
+        rows = []
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 stripped = line.strip()
@@ -40,7 +40,7 @@ class PersistenceService:
                 rows.append(tuple(vals))  # type: ignore[arg-type]
         return rows
 
-    def load_optional_array(self, filename: str):
+    def load_optional_array(self, filename):
         path = self.workspace / filename
         if path.exists():
             try:
@@ -53,7 +53,7 @@ class PersistenceService:
         return None
 
     @staticmethod
-    def _install_numpy_compat_aliases(exc: ModuleNotFoundError) -> bool:
+    def _install_numpy_compat_aliases(exc):
         missing = str(exc)
         if "numpy_.core" not in missing and "numpy._core" not in missing:
             return False
@@ -63,23 +63,23 @@ class PersistenceService:
         sys.modules.setdefault("numpy._core", np.core)
         return True
 
-    def save_array(self, filename: str, data) -> None:
+    def save_array(self, filename, data):
         np.save(self.workspace / filename, data)
 
-    def load_outfile_name(self, default: str = "Test00") -> str:
+    def load_outfile_name(self, default= "Test00"):
         path = self.workspace / "outfile.txt"
         if not path.exists():
             return str(self._resolve_outfile_path(default))
         stored = path.read_text(encoding="utf-8").strip() or default
         return str(self._resolve_outfile_path(stored))
 
-    def save_outfile_name(self, outfile: str) -> None:
+    def save_outfile_name(self, outfile):
         normalized = str(self._resolve_outfile_path(outfile))
         (self.workspace / "outfile.txt").write_text(normalized, encoding="utf-8")
         np.save(self.workspace / "outfile.npy", normalized)
 
-    def load_runtime_settings(self, defaults: Dict[str, Any]) -> Dict[str, Any]:
-        settings: Dict[str, Any] = {
+    def load_runtime_settings(self, defaults):
+        settings = {
             "outfile": str(self._resolve_outfile_path(str(defaults.get("outfile", "Test00")))),
             "angles_file": str(defaults.get("angles_file", "Angles.txt")),
             "reflectance_mode": bool(defaults.get("reflectance_mode", True)),
@@ -111,7 +111,7 @@ class PersistenceService:
 
         return settings
 
-    def save_runtime_settings(self, outfile: str, angles_file: Path, reflectance_mode: bool) -> None:
+    def save_runtime_settings(self, outfile, angles_file, reflectance_mode):
         settings = {
             "outfile": str(self._resolve_outfile_path(outfile)),
             "angles_file": str((angles_file if angles_file.is_absolute() else self.workspace / angles_file).resolve()),
@@ -120,20 +120,20 @@ class PersistenceService:
         path = self.workspace / "runtime_settings.json"
         path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
-    def load_existing_dataset(self, outfile: str):
+    def load_existing_dataset(self, outfile):
         pickle_path = self._resolve_outfile_path(outfile)
         if not pickle_path.exists():
             return []
         with pickle_path.open("rb") as handle:
             return pickle.load(handle)
 
-    def checkpoint_dataset(self, outfile: str, data) -> None:
+    def checkpoint_dataset(self, outfile, data):
         pickle_path = self._resolve_outfile_path(outfile)
         pickle_path.parent.mkdir(parents=True, exist_ok=True)
         with pickle_path.open("wb") as handle:
             pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-    def export_text(self, state: AppState) -> None:
+    def export_text(self, state):
         outfile = self._resolve_outfile_path(state.outfile)
         try:
             np.savetxt(outfile.with_name("{}_.txt".format(outfile.stem)), np.ravel(state.data))

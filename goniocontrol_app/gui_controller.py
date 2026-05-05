@@ -9,7 +9,7 @@ from goniocontrol_app.workflow_service import WorkflowService
 
 
 class GuiController:
-    def __init__(self, workflow: WorkflowService, emit_log: Callable[[str], None], emit_busy: Callable[[bool], None]):
+    def __init__(self, workflow, emit_log, emit_busy):
         self.workflow = workflow
         self.emit_log = emit_log
         self.emit_busy = emit_busy
@@ -17,10 +17,10 @@ class GuiController:
         self._cancel_event = threading.Event()
         self._future: Optional[Future] = None
 
-    def is_busy(self) -> bool:
+    def is_busy(self):
         return self._future is not None and not self._future.done()
 
-    def cancel(self) -> None:
+    def cancel(self):
         self._cancel_event.set()
         self.emit_log("Cancellation requested.")
 
@@ -28,7 +28,7 @@ class GuiController:
         self,
         label: str,
         fn: Callable[[], None],
-        on_error: Optional[Callable[[Exception], None]] = None,
+        on_error = None,
     ) -> None:
         if self.is_busy():
             self.emit_log("Another operation is already running.")
@@ -50,7 +50,7 @@ class GuiController:
 
         self._future = self.executor.submit(task)
 
-    def run_measure(self, repeats: int) -> None:
+    def run_measure(self, repeats):
         self.run_async(
             "Measure (repeats={})".format(repeats),
             lambda: self.workflow.measure_sequence(
@@ -60,7 +60,7 @@ class GuiController:
             ),
         )
 
-    def shutdown_executor(self, wait: bool = True) -> None:
+    def shutdown_executor(self, wait= True):
         # Prevent the worker thread from keeping the process alive on app exit.
         self._cancel_event.set()
         try:
