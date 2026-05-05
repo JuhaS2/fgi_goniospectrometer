@@ -304,7 +304,7 @@ class GoniocontrolGUI(tk.Tk):
         ttk.Button(frm, text="Plot Current Data", command=self._plot).pack(side=tk.LEFT, padx=4, pady=4)
         ttk.Button(frm, text="VNIR Info", command=self._vnir_info).pack(side=tk.LEFT, padx=4, pady=4)
 
-    def _set_busy(self, busy: bool):
+    def _set_busy(self, busyF):
         self.after(0, lambda: self.busy_var.set("Busy" if busy else "Idle"))
 
     def _startup_refresh(self):
@@ -323,7 +323,7 @@ class GoniocontrolGUI(tk.Tk):
         result = self.workflow.startup_preflight()
         self.log("Preflight: {}".format(result))
 
-    def _handle_startup_error(self, exc: Exception):
+    def _handle_startup_error(self, exc):
         def show():
             if self.dry_run:
                 title = "Startup failed in dry run mode"
@@ -361,7 +361,7 @@ class GoniocontrolGUI(tk.Tk):
                 self.motor_current_vars[role].set("N/A")
         self.after(500, self._refresh_motor_angles)
 
-    def log(self, msg: str):
+    def log(self, msg):
         def append():
             self.log_text.insert(tk.END, msg + "\n")
             self.log_text.see(tk.END)
@@ -487,7 +487,7 @@ class GoniocontrolGUI(tk.Tk):
     def _format_angle(self, angle: float) -> str:
         return "{:+.2f}°".format(angle)
 
-    def _nudge_target(self, role: str, delta: float):
+    def _nudge_target(self, role: str, delta):
         raw = self.motor_target_vars[role].get().strip()
         try:
             current = float(raw) if raw else 0.0
@@ -495,7 +495,7 @@ class GoniocontrolGUI(tk.Tk):
             current = 0.0
         self.motor_target_vars[role].set("{:.2f}".format(current + delta))
 
-    def _confirm_out_of_range(self, role: str, value: float) -> bool:
+    def _confirm_out_of_range(self, role, value):
         minimum, maximum = self.MOTOR_LIMITS[role]
         if minimum <= value <= maximum:
             return True
@@ -508,7 +508,7 @@ class GoniocontrolGUI(tk.Tk):
             ),
         )
 
-    def _drive_motor(self, role: str):
+    def _drive_motor(self, role):
         try:
             target = float(self.motor_target_vars[role].get() or "0")
         except ValueError:
@@ -522,7 +522,7 @@ class GoniocontrolGUI(tk.Tk):
             lambda: self.workflow.drive_motor_to_angle(role, target),
         )
 
-    def _set_motor_zero(self, role: str):
+    def _set_motor_zero(self, role):
         motor_name = self.motor_labels[role]
         self.controller.run_async("Set zero for {}".format(motor_name), lambda: self.workflow.set_zero_at_current_position(role))
 
