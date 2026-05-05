@@ -34,14 +34,14 @@ class GuiController:
             return
         self._cancel_event.clear()
         self.emit_busy(True)
-        self.emit_log(f"Starting: {label}")
+        self.emit_log("Starting: {}".format(label))
 
         def task():
             try:
                 fn()
-                self.emit_log(f"Completed: {label}")
+                self.emit_log("Completed: {}".format(label))
             except Exception as exc:
-                self.emit_log(f"Failed: {label}: {exc}")
+                self.emit_log("Failed: {}: {}".format(label, exc))
                 if on_error:
                     on_error(exc)
             finally:
@@ -51,7 +51,7 @@ class GuiController:
 
     def run_measure(self, repeats: int) -> None:
         self.run_async(
-            f"Measure (repeats={repeats})",
+            "Measure (repeats={})".format(repeats),
             lambda: self.workflow.measure_sequence(
                 repeats=repeats,
                 progress=self.emit_log,

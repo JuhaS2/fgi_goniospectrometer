@@ -264,7 +264,7 @@ class GoniocontrolGUI(tk.Tk):
         ttk.Label(goniometer_frame, text="Current angle").grid(row=0, column=1, sticky="w")
         ttk.Label(goniometer_frame, text="Target angle").grid(row=0, column=2, sticky="w")
         for row_idx, (role, label) in enumerate(self.MOTOR_ROLES, start=1):
-            ttk.Label(goniometer_frame, text=f"{label}:").grid(row=row_idx, column=0, sticky="w")
+            ttk.Label(goniometer_frame, text="{}:".format(label)).grid(row=row_idx, column=0, sticky="w")
             ttk.Entry(goniometer_frame, textvariable=self.motor_current_vars[role], width=6, state="readonly").grid(
                 row=row_idx, column=1, sticky="w", padx=4
             )
@@ -321,7 +321,7 @@ class GoniocontrolGUI(tk.Tk):
         if self.state_obj.runtime_notice:
             self.log(self.state_obj.runtime_notice)
         result = self.workflow.startup_preflight()
-        self.log(f"Preflight: {result}")
+        self.log("Preflight: {}".format(result))
 
     def _handle_startup_error(self, exc: Exception):
         def show():
@@ -333,8 +333,8 @@ class GoniocontrolGUI(tk.Tk):
                 title,
                 (
                     "Automatic hardware initialization failed.\n\n"
-                    f"{exc}\n\n"
-                    "Verify spectrometer connectivity and required motor controllers "
+                    "{}\n\n".format(exc)
+                    + "Verify spectrometer connectivity and required motor controllers "
                     "(zenith, azimuth, sample), then restart the application."
                 ),
             )
@@ -371,7 +371,7 @@ class GoniocontrolGUI(tk.Tk):
     def _run_preflight(self):
         self.state_obj.angles_file = Path(self.angle_var.get())
         result = self.workflow.startup_preflight()
-        self.log(f"Status: {result}")
+        self.log("Status: {}".format(result))
 
     def _load_runtime_state(self):
         def run():
@@ -386,7 +386,7 @@ class GoniocontrolGUI(tk.Tk):
         self.outfile_var.set(self.state_obj.outfile)
         angle_path = self.workflow.resolve_path(self.state_obj.angles_file)
         self.angle_var.set(str(angle_path))
-        self.angles_status_var.set(f"Sequence with {len(self.state_obj.angles)} positions")
+        self.angles_status_var.set("Sequence with {} positions".format(len(self.state_obj.angles)))
         self.save_format_var.set("reflectance" if self.state_obj.reflectance_mode else "radiance")
 
     def _browse_output_file(self):
@@ -424,16 +424,16 @@ class GoniocontrolGUI(tk.Tk):
             self.state_obj.angles_file = path
             self.state_obj.angles = self.workflow.persistence.read_angles(path)
             loaded_positions = len(self.state_obj.angles)
-            self.after(0, lambda: self.angles_status_var.set(f"Sequence with {loaded_positions} positions"))
+            self.after(0, lambda: self.angles_status_var.set("Sequence with {} positions".format(loaded_positions)))
             self.workflow.save_runtime_settings()
-            self.log(f"Loaded {len(self.state_obj.angles)} angle rows from {path}")
+            self.log("Loaded {} angle rows from {}".format(len(self.state_obj.angles), path))
 
         self.controller.run_async("Load angles", run)
 
     def _show_angle_file(self):
         path = Path(self.angle_var.get())
         if not path.exists():
-            messagebox.showerror("Angles file missing", f"Angles file does not exist:\n{path}")
+            messagebox.showerror("Angles file missing", "Angles file does not exist:\n{}".format(path))
             return
         try:
             if os.name == "nt":
@@ -443,14 +443,14 @@ class GoniocontrolGUI(tk.Tk):
             else:
                 subprocess.Popen(["xdg-open", str(path)])
         except Exception as exc:
-            messagebox.showerror("Open file failed", f"Could not open angles file:\n{exc}")
+            messagebox.showerror("Open file failed", "Could not open angles file:\n{}".format(exc))
 
     def _toggle_mode(self):
         # Keep both GUI and backend mode aligned.
         desired = self.save_format_var.get() == "reflectance"
         if self.state_obj.reflectance_mode != desired:
             self.workflow.toggle_mode()
-        self.log(f"Mode => {'Reflectance' if self.state_obj.reflectance_mode else 'Radiance'}")
+        self.log("Mode => {}".format("Reflectance" if self.state_obj.reflectance_mode else "Radiance"))
 
     def _restore(self):
         self.controller.run_async("Restore spectrometer", self.workflow.restore_spectrometer)
@@ -463,7 +463,7 @@ class GoniocontrolGUI(tk.Tk):
         def run():
             self.workflow.collect_dark()
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.after(0, lambda: self.dark_last_measured_var.set(f"Last collection: {timestamp}"))
+            self.after(0, lambda: self.dark_last_measured_var.set("Last collection: {}".format(timestamp)))
 
         self.controller.run_async("Collect dark", run)
 
@@ -472,7 +472,7 @@ class GoniocontrolGUI(tk.Tk):
             za = float(self.white_ref_zenith_var.get() or "0")
             self.workflow.collect_white(za)
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.after(0, lambda: self.white_last_measured_var.set(f"Last collection: {timestamp}"))
+            self.after(0, lambda: self.white_last_measured_var.set("Last collection: {}".format(timestamp)))
 
         self.controller.run_async("Collect white", run)
 
@@ -485,7 +485,7 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Calibrate polarizer", lambda: self.workflow.calibrate_polarizer(za, progress=self.log))
 
     def _format_angle(self, angle: float) -> str:
-        return f"{angle:+.2f}°"
+        return "{:+.2f}°".format(angle)
 
     def _nudge_target(self, role: str, delta: float):
         raw = self.motor_target_vars[role].get().strip()
@@ -493,7 +493,7 @@ class GoniocontrolGUI(tk.Tk):
             current = float(raw) if raw else 0.0
         except ValueError:
             current = 0.0
-        self.motor_target_vars[role].set(f"{current + delta:.2f}")
+        self.motor_target_vars[role].set("{:.2f}".format(current + delta))
 
     def _confirm_out_of_range(self, role: str, value: float) -> bool:
         minimum, maximum = self.MOTOR_LIMITS[role]
@@ -502,8 +502,9 @@ class GoniocontrolGUI(tk.Tk):
         return messagebox.askyesno(
             "Target angle outside nominal range",
             (
-                f"{self.motor_labels[role]} target {value:.2f}° is outside nominal range "
-                f"[{minimum:.2f}, {maximum:.2f}]°. Continue?"
+                "{} target {:.2f}° is outside nominal range [{:.2f}, {:.2f}]°. Continue?".format(
+                    self.motor_labels[role], value, minimum, maximum
+                )
             ),
         )
 
@@ -511,19 +512,19 @@ class GoniocontrolGUI(tk.Tk):
         try:
             target = float(self.motor_target_vars[role].get() or "0")
         except ValueError:
-            messagebox.showerror("Invalid input", f"Enter a numeric target angle for {self.motor_labels[role]}.")
+            messagebox.showerror("Invalid input", "Enter a numeric target angle for {}.".format(self.motor_labels[role]))
             return
         if not self._confirm_out_of_range(role, target):
             return
         motor_name = self.motor_labels[role]
         self.controller.run_async(
-            f"Drive {motor_name} to {target:.2f} deg",
+            "Drive {} to {:.2f} deg".format(motor_name, target),
             lambda: self.workflow.drive_motor_to_angle(role, target),
         )
 
     def _set_motor_zero(self, role: str):
         motor_name = self.motor_labels[role]
-        self.controller.run_async(f"Set zero for {motor_name}", lambda: self.workflow.set_zero_at_current_position(role))
+        self.controller.run_async("Set zero for {}".format(motor_name), lambda: self.workflow.set_zero_at_current_position(role))
 
     def _measure(self):
         angle_path = Path(self.angle_var.get())
@@ -532,10 +533,10 @@ class GoniocontrolGUI(tk.Tk):
             try:
                 self.state_obj.angles = self.workflow.persistence.read_angles(angle_path)
                 loaded_positions = len(self.state_obj.angles)
-                self.angles_status_var.set(f"Sequence with {loaded_positions} positions")
-                self.log(f"Loaded {loaded_positions} angle rows from {angle_path}")
+                self.angles_status_var.set("Sequence with {} positions".format(loaded_positions))
+                self.log("Loaded {} angle rows from {}".format(loaded_positions, angle_path))
             except Exception as exc:
-                messagebox.showerror("Angles file error", f"Could not load angles file:\n{exc}")
+                messagebox.showerror("Angles file error", "Could not load angles file:\n{}".format(exc))
                 return
         if len(self.state_obj.angles) == 0:
             messagebox.showerror("Angles required", "Measurement sequence requires at least one angle row.")
@@ -557,15 +558,16 @@ class GoniocontrolGUI(tk.Tk):
             azimuth = self.workflow.get_motor_angle_from_zero("azimuth")
             sample = self.workflow.get_motor_angle_from_zero("sample")
         except Exception as exc:
-            messagebox.showerror("Manual measurement unavailable", f"Could not read current motor angles:\n{exc}")
+            messagebox.showerror("Manual measurement unavailable", "Could not read current motor angles:\n{}".format(exc))
             return
 
         angle_row = (sensor_pol, lamp_pol, zenith, azimuth, sample, 0.0, 1.0)
         previous_angles = list(self.state_obj.angles)
         self.log(
             "Manual single-spectrum at current position: "
-            f"sz={sensor_pol:.2f}, sa00={lamp_pol:.2f}, "
-            f"ze={zenith:.2f}, az={azimuth:.2f}, sample={sample:.2f}"
+            "sz={:.2f}, sa00={:.2f}, ze={:.2f}, az={:.2f}, sample={:.2f}".format(
+                sensor_pol, lamp_pol, zenith, azimuth, sample
+            )
         )
         self.state_obj.angles = [angle_row]
 
@@ -605,7 +607,7 @@ class GoniocontrolGUI(tk.Tk):
             except Exception as exc:
                 self._shutting_down = False
                 self.busy_var.set("Idle")
-                messagebox.showerror("Shutdown failed", f"Could not shutdown devices:\n{exc}")
+                messagebox.showerror("Shutdown failed", "Could not shutdown devices:\n{}".format(exc))
                 return
             self._finalize_exit()
 

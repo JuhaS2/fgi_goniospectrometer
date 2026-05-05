@@ -51,7 +51,7 @@ class MockMotorService:
     def discover(self) -> Dict[str, MotorIdentity]:
         roles = {}
         for idx, role in enumerate(self._positions):
-            roles[role] = MotorIdentity(serial_number=1000 + idx, device_name=f"mock_{role}", device_id=idx)
+            roles[role] = MotorIdentity(serial_number=1000 + idx, device_name="mock_{}".format(role), device_id=idx)
             self.handles[role] = role
         return roles
 

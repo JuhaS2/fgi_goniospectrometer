@@ -20,7 +20,7 @@ class LCCService:
     def set_retardance(self, value: float) -> None:
         if not self.enabled:
             return
-        self.lcc.write(f"RE={value}")
+        self.lcc.write("RE={}".format(value))
 
     def drain(self):
         if not self.enabled:

@@ -31,7 +31,7 @@ class MotorService:
         "zenith": 13217,
         "azimuth": 13225,
     }
-    SCAN_NAMES = [f"xi-com:///dev/ttyACM{i}" for i in range(11)]
+    SCAN_NAMES = ["xi-com:///dev/ttyACM{}".format(i) for i in range(11)]
 
     def __init__(self):
         self.handles: Dict[str, MotorHandle] = {}
@@ -102,7 +102,7 @@ class MotorService:
         handle = self.handles[role]
         result = lib.command_wait_for_stop(handle.identity.device_id, timeout_ms)
         if result != 0:
-            raise RecoverableHardwareError(f"Motor {role} stop wait returned {result}")
+            raise RecoverableHardwareError("Motor {} stop wait returned {}".format(role, result))
 
     def close_all(self) -> None:
         for handle in self.handles.values():

@@ -118,7 +118,7 @@ class PersistenceService:
     def export_text(self, state: AppState) -> None:
         outfile = self._resolve_outfile_path(state.outfile)
         try:
-            np.savetxt(outfile.with_name(f"{outfile.stem}_.txt"), np.ravel(state.data))
+            np.savetxt(outfile.with_name("{}_.txt".format(outfile.stem)), np.ravel(state.data))
         except Exception:
             pass
         out = outfile.with_suffix(".txt")

@@ -127,9 +127,8 @@ class WorkflowService:
         except FileNotFoundError:
             fallback = Path("Angles.txt")
             fallback_resolved = self.resolve_path(fallback)
-            self.state.runtime_notice = (
-                f"Saved angles file not found ({self.state.angles_file}); "
-                f"falling back to {fallback_resolved}."
+            self.state.runtime_notice = "Saved angles file not found ({}); falling back to {}.".format(
+                self.state.angles_file, fallback_resolved
             )
             self.state.angles_file = fallback
             if fallback_resolved.exists():
@@ -200,7 +199,7 @@ class WorkflowService:
         for idx in range(25):
             header = self.spectrometer.optimize()
             if progress:
-                progress(f"Optimize try {idx + 1}/25 => header {header[0]}")
+                progress("Optimize try {}/25 => header {}".format(idx + 1, header[0]))
             if header[0] == 100:
                 break
         self.state.calibration.optimizer_header = np.array(header, dtype=object)
@@ -256,7 +255,7 @@ class WorkflowService:
             wrdata = self._take_i(repeats=25)
             wce = MakeI(wrdata, self._dc(), self._drift(), self._vdcc) - self._dc_remainder()
             self.state.calibration.ending_white = wce
-            self.persistence.save_array(f"{self.state.outfile}White1E.npy", wce)
+            self.persistence.save_array("{}White1E.npy".format(self.state.outfile), wce)
         elif npols == 3:
             wrdata = self._take_pol_sequence_iqu()
             wce = MakeStokesIQU(wrdata, self._dc(), self._drift(), self._vdcc, self.state.calibration.aa)
@@ -286,12 +285,12 @@ class WorkflowService:
 
     def refresh_motor_position(self, role: str) -> None:
         if role not in self.motors.handles:
-            raise PreconditionError(f"Motor '{role}' is not available.")
+            raise PreconditionError("Motor '{}' is not available.".format(role))
         self.state.devices.positions_current[role] = self.motors.get_position(role)
 
     def get_motor_angle_from_zero(self, role: str) -> float:
         if role not in self.state.devices.positions_zero:
-            raise PreconditionError(f"Motor '{role}' has no zero reference.")
+            raise PreconditionError("Motor '{}' has no zero reference.".format(role))
         if role not in self.state.devices.positions_current:
             self.refresh_motor_position(role)
         current = self.state.devices.positions_current[role]
@@ -300,7 +299,7 @@ class WorkflowService:
 
     def drive_motor_to_angle(self, role: str, angle_deg: float) -> None:
         if role not in self.state.devices.positions_zero:
-            raise PreconditionError(f"Motor '{role}' has no zero reference.")
+            raise PreconditionError("Motor '{}' has no zero reference.".format(role))
         zero = self.state.devices.positions_zero[role]
         self.motors.move_deg_from_zero(role, angle_deg, zero)
         self.motors.wait(role)
@@ -355,7 +354,7 @@ class WorkflowService:
             if should_cancel and should_cancel():
                 return
             if progress:
-                progress(f"Angle {idx}/{total}: ze={ze} az={az} be={be}")
+                progress("Angle {}/{}: ze={} az={} be={}".format(idx, total, ze, az, be))
             self._move_measurement_axes(ze=ze, az=az, be=be)
             if wwb == 0.0:
                 continue
