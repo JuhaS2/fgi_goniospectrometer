@@ -31,7 +31,7 @@ class GoniocontrolGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Goniocontrol GUI")
-        self.geometry("1100x760")
+        self.geometry("800x416")
         self.workspace = Path(__file__).resolve().parent
 
         self.state_obj = AppState(workspace=self.workspace)
@@ -67,6 +67,8 @@ class GoniocontrolGUI(tk.Tk):
         self.white_ref_zenith_var = tk.StringVar(value="0")
         self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.white_last_measured_var = tk.StringVar(value="Not collected yet!")
+        self.angles_status_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.angles_status_font.configure(slant="italic")
         self.motor_labels = dict(self.MOTOR_ROLES)
         self.motor_current_vars = {role: tk.StringVar(value="N/A") for role, _ in self.MOTOR_ROLES}
         self.motor_target_vars = {role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES}
@@ -88,19 +90,19 @@ class GoniocontrolGUI(tk.Tk):
 
         status = ttk.Frame(notebook)
         motors = ttk.Frame(notebook)
+        spectrometer = ttk.Frame(notebook)
         setup = ttk.Frame(notebook)
         plotting = ttk.Frame(notebook)
         notebook.add(status, text="System Status")
         notebook.add(motors, text="Motors")
+        notebook.add(spectrometer, text="Spectrometer")
         notebook.add(setup, text="Measurement")
         notebook.add(plotting, text="Plot/View")
 
-        self.log_text = tk.Text(root, height=12, wrap=tk.WORD)
-        self.log_text.pack(fill=tk.BOTH, expand=False, pady=(8, 0))
-
         self._build_status_panel(status)
-        self._build_setup_panel(setup)
         self._build_motors_panel(motors)
+        self._build_spectrometer_panel(spectrometer)
+        self._build_setup_panel(setup)
         self._build_plotting_panel(plotting)
         self.log(self.log_boot)
 
@@ -110,44 +112,55 @@ class GoniocontrolGUI(tk.Tk):
         button_width = 22
         italic_font = tkfont.nametofont("TkDefaultFont").copy()
         italic_font.configure(slant="italic")
+        frm.columnconfigure(0, weight=1)
 
         status_row = ttk.Frame(frm)
-        status_row.pack(fill=tk.X, pady=2)
+        status_row.pack(fill=tk.X, pady=(2, 4))
         ttk.Label(status_row, text="Status:").pack(side=tk.LEFT)
         ttk.Label(status_row, textvariable=self.busy_var).pack(side=tk.LEFT, padx=6)
 
+        actions_frame = ttk.Frame(frm)
+        actions_frame.pack(fill=tk.X)
         actions = (
             ("Restore Spectrometer", self._restore, "Reconnects to spectrometer communication."),
             ("Load Runtime State", self._load_runtime_state, "Unnecessary button? Loads saved runtime settings into the GUI."),
             ("Check configuration", self._run_preflight, "Unnecessary button? Runs startup checks for devices and readiness."),
         )
         for text, command, description in actions:
-            row = ttk.Frame(frm)
+            row = ttk.Frame(actions_frame)
             row.pack(fill=tk.X, padx=4, pady=2, anchor="w")
             ttk.Button(row, text=text, command=command, width=button_width).pack(side=tk.LEFT)
             ttk.Label(row, text=description, font=italic_font).pack(side=tk.LEFT, padx=(8, 0))
 
+        log_frame = ttk.LabelFrame(frm, text="Terminal Output")
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=(8, 0))
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD)
+        log_scroll = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 4), pady=4)
+
     def _build_setup_panel(self, parent):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        italic_font = tkfont.nametofont("TkDefaultFont").copy()
-        italic_font.configure(slant="italic")
-        self.angles_status_font = italic_font
 
         output_frame = self._build_output_file_frame(frm)
         output_frame.grid(row=0, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
 
-        calibration_frame = self._build_measurement_calibration_frame(frm)
-        calibration_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
-
         manual_frame = self._build_manual_measurement_frame(frm)
-        manual_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
+        manual_frame.grid(row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10))
 
         sequence_frame = self._build_measurement_sequence_frame(frm)
-        sequence_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
+        sequence_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0))
 
         frm.columnconfigure(1, weight=1)
         sequence_frame.columnconfigure(1, weight=1)
+
+    def _build_spectrometer_panel(self, parent):
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        calibration_frame = self._build_measurement_calibration_frame(frm)
+        calibration_frame.pack(fill=tk.X, padx=2, pady=(0, 10))
 
     def _build_output_file_frame(self, parent):
         output_frame = ttk.LabelFrame(parent, text="Output file")
