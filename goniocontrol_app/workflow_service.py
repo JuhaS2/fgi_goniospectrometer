@@ -112,6 +112,54 @@ class WorkflowService:
         else:
             self.state.devices.npols = 3
 
+    def get_device_status_snapshot(self):
+        required_motors = ("zenith", "azimuth", "sample")
+        polarizer_roles = ("sensor_polarizer", "lamp_polarizer")
+        snapshot = {
+            "spectrometer": "NOT CONNECTED",
+            "motors": "NOT CONNECTED",
+            "polarizer": "Optional / Not present",
+        }
+
+        if self.state.devices.connected_spectrometer:
+            try:
+                self.spectrometer.vnir_info()
+                snapshot["spectrometer"] = "Connected"
+            except Exception:
+                snapshot["spectrometer"] = "NOT CONNECTED"
+                self.state.devices.connected_spectrometer = False
+
+        missing_required = [role for role in required_motors if role not in self.motors.handles]
+        if missing_required:
+            snapshot["motors"] = "NOT CONNECTED ({})".format(", ".join(sorted(missing_required)))
+        else:
+            motor_faults = []
+            for role in required_motors:
+                try:
+                    self.motors.get_position(role)
+                except Exception:
+                    motor_faults.append(role)
+            if motor_faults:
+                snapshot["motors"] = "NOT CONNECTED ({})".format(", ".join(sorted(motor_faults)))
+            else:
+                snapshot["motors"] = "Connected"
+
+        present_polarizers = [role for role in polarizer_roles if role in self.motors.handles]
+        if not present_polarizers:
+            snapshot["polarizer"] = "Optional / Not present"
+        else:
+            polarizer_faults = []
+            for role in present_polarizers:
+                try:
+                    self.motors.get_position(role)
+                except Exception:
+                    polarizer_faults.append(role)
+            if polarizer_faults:
+                snapshot["polarizer"] = "NOT CONNECTED ({})".format(", ".join(sorted(polarizer_faults)))
+            else:
+                snapshot["polarizer"] = "Connected"
+        return snapshot
+
     def load_runtime_state(self):
         self.load_runtime_settings()
         self.state.runtime_notice = None

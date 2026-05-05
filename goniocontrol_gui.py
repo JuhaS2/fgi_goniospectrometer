@@ -56,6 +56,9 @@ class GoniocontrolGUI(tk.Tk):
         self.controller = GuiController(self.workflow, self.log, self._set_busy)
 
         self.busy_var = tk.StringVar(value="Idle")
+        self.spectrometer_status_var = tk.StringVar(value="Unknown")
+        self.motors_status_var = tk.StringVar(value="Unknown")
+        self.polarizer_status_var = tk.StringVar(value="Unknown")
         self.save_format_var = tk.StringVar(value="reflectance" if self.state_obj.reflectance_mode else "radiance")
         default_outfile = str((self.workspace / "Test00.pickle").resolve())
         self.outfile_var = tk.StringVar(value=default_outfile)
@@ -69,6 +72,8 @@ class GoniocontrolGUI(tk.Tk):
         self.white_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.angles_status_font = tkfont.nametofont("TkDefaultFont").copy()
         self.angles_status_font.configure(slant="italic")
+        self.status_value_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.status_value_font.configure(weight="bold")
         self.motor_labels = dict(self.MOTOR_ROLES)
         self.motor_current_vars = {role: tk.StringVar(value="N/A") for role, _ in self.MOTOR_ROLES}
         self.motor_target_vars = {role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES}
@@ -80,6 +85,7 @@ class GoniocontrolGUI(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._shutdown)
         self.after(200, self._startup_refresh)
         self.after(500, self._refresh_motor_angles)
+        self.after(700, self._refresh_device_status)
 
     def _build_ui(self):
         root = ttk.Frame(self)
@@ -117,7 +123,31 @@ class GoniocontrolGUI(tk.Tk):
         status_row = ttk.Frame(frm)
         status_row.pack(fill=tk.X, pady=(2, 4))
         ttk.Label(status_row, text="Status:").pack(side=tk.LEFT)
-        ttk.Label(status_row, textvariable=self.busy_var).pack(side=tk.LEFT, padx=6)
+        tk.Label(status_row, textvariable=self.busy_var, font=self.status_value_font).pack(side=tk.LEFT, padx=6)
+        ttk.Label(status_row, text="Spectrometer:").pack(side=tk.LEFT, padx=(12, 4))
+        self.spectrometer_status_label = tk.Label(
+            status_row,
+            textvariable=self.spectrometer_status_var,
+            font=self.status_value_font,
+            fg="black",
+        )
+        self.spectrometer_status_label.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(status_row, text="Motors:").pack(side=tk.LEFT, padx=(4, 4))
+        self.motors_status_label = tk.Label(
+            status_row,
+            textvariable=self.motors_status_var,
+            font=self.status_value_font,
+            fg="black",
+        )
+        self.motors_status_label.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(status_row, text="Polarizer:").pack(side=tk.LEFT, padx=(4, 4))
+        self.polarizer_status_label = tk.Label(
+            status_row,
+            textvariable=self.polarizer_status_var,
+            font=self.status_value_font,
+            fg="black",
+        )
+        self.polarizer_status_label.pack(side=tk.LEFT, padx=(0, 2))
 
         actions_frame = ttk.Frame(frm)
         actions_frame.pack(fill=tk.X)
@@ -330,6 +360,7 @@ class GoniocontrolGUI(tk.Tk):
         self.workflow.connect_devices()
         self.workflow.load_runtime_state()
         self.after(0, self._sync_runtime_state_ui)
+        self.after(0, self._update_device_status_labels)
         if self.state_obj.runtime_notice:
             self.log(self.state_obj.runtime_notice)
         result = self.workflow.startup_preflight()
@@ -384,6 +415,7 @@ class GoniocontrolGUI(tk.Tk):
         self.state_obj.angles_file = Path(self.angle_var.get())
         result = self.workflow.startup_preflight()
         self.log("Status: {}".format(result))
+        self._update_device_status_labels()
 
     def _load_runtime_state(self):
         def run():
@@ -465,7 +497,11 @@ class GoniocontrolGUI(tk.Tk):
         self.log("Mode => {}".format("Reflectance" if self.state_obj.reflectance_mode else "Radiance"))
 
     def _restore(self):
-        self.controller.run_async("Restore spectrometer", self.workflow.restore_spectrometer)
+        def run():
+            self.workflow.restore_spectrometer()
+            self.after(0, self._update_device_status_labels)
+
+        self.controller.run_async("Restore spectrometer", run)
 
     def _optimize(self):
         za = float(self.optimize_zenith_var.get() or "0")
@@ -603,6 +639,32 @@ class GoniocontrolGUI(tk.Tk):
 
     def _vnir_info(self):
         self.controller.run_async("VNIR info", lambda: self.log(str(self.workflow.show_vnir_info())))
+
+    def _update_device_status_labels(self):
+        try:
+            snapshot = self.workflow.get_device_status_snapshot()
+        except Exception:
+            snapshot = {
+                "spectrometer": "Unknown",
+                "motors": "Unknown",
+                "polarizer": "Unknown",
+            }
+        self.spectrometer_status_var.set(snapshot["spectrometer"])
+        self.motors_status_var.set(snapshot["motors"])
+        self.polarizer_status_var.set(snapshot["polarizer"])
+        self.spectrometer_status_label.configure(
+            fg="red" if snapshot["spectrometer"].startswith("NOT CONNECTED") else "black"
+        )
+        self.motors_status_label.configure(
+            fg="red" if snapshot["motors"].startswith("NOT CONNECTED") else "black"
+        )
+        self.polarizer_status_label.configure(fg="black")
+
+    def _refresh_device_status(self):
+        if self._shutting_down:
+            return
+        self._update_device_status_labels()
+        self.after(2000, self._refresh_device_status)
 
     def _shutdown(self):
         if self._shutting_down:
