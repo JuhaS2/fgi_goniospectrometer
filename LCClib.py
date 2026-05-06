@@ -6,7 +6,7 @@ Created on Fri Aug  3 15:39:39 2018
 @author: jouni
 modified by Juha Suomalainen 2026-05-06
 
-Interface for the LCC serial controller used in polarization measurements.
+Interface for the Liquid Crystal Cell (LLC) serial controller used in polarization measurements.
 
 This module:
 - connects to the LCC device over a serial VISA resource,
@@ -25,11 +25,13 @@ except ImportError:
 import time
 import numpy as np
 
+print("Connecting to polarizer controller...")
+
 startt = "\x05"
 resources = visa.ResourceManager("@py")
 rm = visa.ResourceManager()
 lr = rm.list_resources()
-print(lr)
+# print(lr)
 LCC = None
 resources = visa.ResourceManager("@py")
 trialres = [
@@ -51,7 +53,7 @@ for ress in trialres:
         continue
 
 if LCC == None:
-    print("No LCC found, continue without")
+    print("   No polarizer controller found. Using system without a polarizer.")
     NRets = 0
     RetStep = 0.0
     LCCwl = []
@@ -59,7 +61,7 @@ else:
     startt = "\x05"
     # print('RT:',LCC.read_termination)
     # print('WT:',LCC.write_termination=='\r\n')
-    print("starting LCC initialisation...")
+    print("   Starting LCC initialisation...")
     LCC.baud_rate = 115200
     LCC.timeout = 2000
     LCC.write(startt)
@@ -76,14 +78,14 @@ else:
     result = LCC.query("WL=515")
     LCCwlq = LCC.query("WL?")
     LCCwl = int(LCCwlq[4:7])
-    print("LCC lead wavelength:", LCCwl, "nm")
+    print("   LCC lead wavelength:", LCCwl, "nm")
     # print(len(LCD.query('WL?')))
 
     SP = LCC.query("SP?")
     WLmax = np.int(SP[7:10])
     SP = LCC.read()
     WLmin = np.int(SP[7:10])
-    print(WLmin, WLmax)
+    print("   ", WLmin, WLmax)
     SP = LCC.read()
     SP = LCC.read()
     LCC.write("RE=0")
@@ -92,8 +94,9 @@ else:
     retardances = RetStep * np.arange(
         NRets - 1, -1, -1
     )  # more optimal to move this way
-    print("Nominal Retardances:", retardances)
+    print("   Nominal Retardances:", retardances)
     volts = np.zeros(NRets)
+    print("   Ready.")
 
 
 def GetSpectralRetardances(ret, wls):
