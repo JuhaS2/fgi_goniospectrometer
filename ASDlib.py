@@ -17,7 +17,7 @@ except Exception as exc:
     # LCC is optional for runs without retardance hardware.
     # Avoid import-time hard failure from LCClib side effects/dependencies.
     print(
-        "ASDlib: LCClib unavailable ({}: {}), continuing without LCC.".format(
+        "Polarizer unavailable ({}: {}). Continuing without Polarizer.".format(
             type(exc).__name__, exc
         )
     )

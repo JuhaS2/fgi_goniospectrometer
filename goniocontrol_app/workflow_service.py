@@ -62,12 +62,14 @@ class WorkflowService:
         motors: Any,
         spectrometer: Any,
         lcc: Any,
+        on_spectrum = None,
     ):
         self.state = state
         self.persistence = persistence
         self.motors = motors
         self.spectrometer = spectrometer
         self.lcc = lcc
+        self.on_spectrum = on_spectrum
 
     def startup_preflight(self):
         result = {}
@@ -242,7 +244,6 @@ class WorkflowService:
         return self.spectrometer.vnir_info()
 
     def optimize(self, wr_zenith, progress= None):
-        self.go_zenith(wr_zenith)
         for idx in range(25):
             header = self.spectrometer.optimize()
             if progress:
@@ -266,7 +267,6 @@ class WorkflowService:
 
     def collect_white(self, wr_zenith):
         self._require_dark()
-        self.go_zenith(wr_zenith)
         npols = self.state.devices.npols
         if npols == 1:
             wrdata = self._take_i(repeats=25)
@@ -429,35 +429,46 @@ class WorkflowService:
     def _measure_at_angle(self, repeats):
         npols = self.state.devices.npols
         if npols == 16:
-            subdata = self._take_pol_sequence_44()
+            subdata = self._take_pol_sequence_44(source="measurement")
             ss = MakeMuller(subdata, self._dc(), self._drift(), self._vdcc, self.state.calibration.aa)
             rr = MakeRef44(ss, self.state.calibration.white)
         elif npols == 3:
-            subdata = self._take_pol_sequence_iqu()
+            subdata = self._take_pol_sequence_iqu(source="measurement")
             ss = MakeStokesIQU(subdata, self._dc(), self._drift(), self._vdcc, self.state.calibration.aa)
             rr = MakeRef(ss, self.state.calibration.white)
         else:
-            subdata = self._take_i(repeats=repeats)
+            subdata = self._take_i(repeats=repeats, source="measurement")
             ss = MakeI(subdata, self._dc(), self._drift(), self._vdcc) - self._dc_remainder()
             rr = MakeRef(ss, self.state.calibration.white)
         return ss, rr
 
-    def _take_i(self, repeats= 1):
+    def _publish_spectrum(self, header, spectrum, source):
+        if self.on_spectrum is None:
+            return
+        try:
+            self.on_spectrum(header, spectrum, source)
+        except Exception:
+            # Live-view callbacks must never impact measurement workflows.
+            pass
+
+    def _take_i(self, repeats= 1, source= "workflow"):
         header, spectrum = self.spectrometer.read_average(repeats)
+        self._publish_spectrum(header, spectrum, source)
         drift = header[22]
         return [(0.0, 0.0, spectrum, drift)]
 
-    def _take_pol_sequence_iqu(self):
+    def _take_pol_sequence_iqu(self, source= "workflow"):
         subdata = []
         self.lcc.set_retardance(0)
         for wg in [0, 45, 90, 135]:
             self._move_sensor_polarizer(wg)
             header, spectrum = self.spectrometer.read_single()
+            self._publish_spectrum(header, spectrum, source)
             subdata.append((0.0, wg, spectrum, header[22]))
         self._move_sensor_polarizer(0)
         return subdata
 
-    def _take_pol_sequence_44(self):
+    def _take_pol_sequence_44(self, source= "workflow"):
         subdata = []
         rets = list(self.lcc.retardances) if self.lcc.retardances is not None else [0]
         rets = rets or [0]
@@ -468,6 +479,7 @@ class WorkflowService:
                 for ret in rets:
                     self.lcc.set_retardance(float(ret))
                     header, spectrum = self.spectrometer.read_single()
+                    self._publish_spectrum(header, spectrum, source)
                     subdata.append((float(ret), wg, lamp, spectrum, header[22]))
         self._move_sensor_polarizer(0)
         self._move_lamp_polarizer(0)

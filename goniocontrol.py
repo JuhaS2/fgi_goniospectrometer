@@ -9,12 +9,17 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 from goniocontrol_app.gui_controller import GuiController
 from goniocontrol_app.services.mock_services import (
     MockLCCService,
     MockMotorService,
     MockSpectrometerService,
 )
+from goniocontrol_app.services.live_spectrum_service import LiveSpectrumService
 from goniocontrol_app.services.persistence_service import PersistenceService
 from goniocontrol_app.state import AppState
 from goniocontrol_app.workflow_service import WorkflowService
@@ -63,6 +68,13 @@ class GoniocontrolGUI(tk.Tk):
             self.state_obj, persistence, motors, spectrometer, lcc
         )
         self.controller = GuiController(self.workflow, self.log, self._set_busy)
+        self.live_spectrum_service = LiveSpectrumService(
+            spectrometer=spectrometer,
+            emit_log=self.log,
+            should_idle_poll=lambda: not self.controller.is_busy()
+            and not self._shutting_down,
+        )
+        self.workflow.on_spectrum = self.live_spectrum_service.on_spectrum
 
         self.busy_var = tk.StringVar(value="Idle")
         self.spectrometer_status_var = tk.StringVar(value="Unknown")
@@ -77,8 +89,7 @@ class GoniocontrolGUI(tk.Tk):
         self.angle_var = tk.StringVar(value=str(self.workspace / "Angles.txt"))
         self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
         self.repeats_var = tk.StringVar(value="1")
-        self.optimize_zenith_var = tk.StringVar(value="0")
-        self.white_ref_zenith_var = tk.StringVar(value="0")
+        self.sensor_zenith_var = tk.StringVar(value="0")
         self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.white_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.angles_status_font = tkfont.nametofont("TkDefaultFont").copy()
@@ -95,12 +106,17 @@ class GoniocontrolGUI(tk.Tk):
         self.motor_drive_buttons = {}
         self.motor_zero_buttons = {}
         self._shutting_down = False
+        self.live_source_var = tk.StringVar(value="none")
+        self.live_timestamp_var = tk.StringVar(value="n/a")
+        self._live_last_seq = -1
+        self._live_line = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._shutdown)
         self.after(200, self._startup_refresh)
         self.after(500, self._refresh_motor_angles)
         self.after(700, self._refresh_device_status)
+        self.after(400, self._refresh_live_plot)
 
     def _build_ui(self):
         root = ttk.Frame(self)
@@ -113,18 +129,15 @@ class GoniocontrolGUI(tk.Tk):
         motors = ttk.Frame(notebook)
         spectrometer = ttk.Frame(notebook)
         setup = ttk.Frame(notebook)
-        plotting = ttk.Frame(notebook)
         notebook.add(status, text="System Status")
         notebook.add(motors, text="Motors")
         notebook.add(spectrometer, text="Spectrometer")
         notebook.add(setup, text="Measurement")
-        notebook.add(plotting, text="Plot/View")
 
         self._build_status_panel(status)
         self._build_motors_panel(motors)
         self._build_spectrometer_panel(spectrometer)
         self._build_setup_panel(setup)
-        self._build_plotting_panel(plotting)
         self.log(self.log_boot)
 
     def _build_status_panel(self, parent):
@@ -230,8 +243,53 @@ class GoniocontrolGUI(tk.Tk):
     def _build_spectrometer_panel(self, parent):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        calibration_frame = self._build_measurement_calibration_frame(frm)
-        calibration_frame.pack(fill=tk.X, padx=2, pady=(0, 10))
+        frm.columnconfigure(0, weight=0)
+        frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(0, weight=1)
+        left_column = ttk.Frame(frm)
+        left_column.grid(row=0, column=0, sticky="nsw", padx=(2, 8), pady=0)
+        sensor_zenith_frame = self._build_sensor_zenith_frame(left_column)
+        sensor_zenith_frame.pack(fill=tk.X, padx=0, pady=(0, 8))
+        calibration_frame = self._build_measurement_calibration_frame(left_column)
+        calibration_frame.pack(fill=tk.X, padx=0, pady=0)
+        live_frame = ttk.LabelFrame(frm, text="Live spectrum")
+        live_frame.grid(row=0, column=1, sticky="nsew", padx=2, pady=0)
+
+        meta_row = ttk.Frame(live_frame)
+        meta_row.pack(fill=tk.X, padx=4, pady=(4, 2))
+        ttk.Label(meta_row, text="Source:").pack(side=tk.LEFT)
+        ttk.Label(meta_row, textvariable=self.live_source_var).pack(
+            side=tk.LEFT, padx=(4, 12)
+        )
+        ttk.Label(meta_row, text="Timestamp:").pack(side=tk.LEFT)
+        ttk.Label(meta_row, textvariable=self.live_timestamp_var).pack(
+            side=tk.LEFT, padx=(4, 0)
+        )
+
+        self.live_figure = Figure(figsize=(7.2, 2.5), dpi=100)
+        ax = self.live_figure.add_subplot(111)
+        # ax.set_title("Latest spectrum")
+        ax.set_xlabel("Wavelength (nm)")
+        ax.set_ylabel("DN")
+        ax.grid(True)
+        self._live_ax = ax
+        self.live_canvas = FigureCanvasTkAgg(self.live_figure, master=live_frame)
+        self.live_canvas.get_tk_widget().pack(
+            fill=tk.BOTH, expand=True, padx=4, pady=(0, 4)
+        )
+
+    def _build_sensor_zenith_frame(self, parent):
+        sensor_frame = ttk.LabelFrame(parent, text="Sensor Zenith")
+        ttk.Button(
+            sensor_frame,
+            text="Drive",
+            width=6,
+            command=self._drive_sensor_zenith,
+        ).grid(row=0, column=0, padx=(4, 2), pady=4, sticky="w")
+        ttk.Entry(sensor_frame, textvariable=self.sensor_zenith_var, width=8).grid(
+            row=0, column=1, padx=(2, 4), pady=4, sticky="w"
+        )
+        return sensor_frame
 
     def _build_output_file_frame(self, parent):
         output_frame = ttk.LabelFrame(parent, text="Output file")
@@ -264,53 +322,42 @@ class GoniocontrolGUI(tk.Tk):
     def _build_measurement_calibration_frame(self, parent):
         calibration_frame = ttk.LabelFrame(parent, text="Spectrometer Config")
         calibration_button_width = 16
+        calibration_frame.columnconfigure(0, weight=0)
         ttk.Button(
             calibration_frame,
             text="Optimize",
             command=self._optimize,
             width=calibration_button_width,
         ).grid(row=0, column=0, padx=4, pady=4, sticky="w")
-        ttk.Label(calibration_frame, text="Sensor Zen").grid(
-            row=0, column=1, sticky="w", padx=(12, 4)
-        )
-        ttk.Entry(
-            calibration_frame, textvariable=self.optimize_zenith_var, width=10
-        ).grid(row=0, column=2, sticky="w", padx=4)
         ttk.Label(
             calibration_frame,
             text="Not optimized yet!",
             font=self.angles_status_font,
-        ).grid(row=0, column=3, sticky="w", padx=(10, 4))
+        ).grid(row=1, column=0, sticky="w", padx=4, pady=(0, 4))
 
         ttk.Button(
             calibration_frame,
             text="Dark Current",
             command=self._dark,
             width=calibration_button_width,
-        ).grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=2, column=0, padx=4, pady=(6, 4), sticky="w")
         ttk.Label(
             calibration_frame,
             textvariable=self.dark_last_measured_var,
             font=self.angles_status_font,
-        ).grid(row=1, column=3, sticky="w", padx=(10, 4))
+        ).grid(row=3, column=0, sticky="w", padx=4, pady=(0, 4))
 
         ttk.Button(
             calibration_frame,
             text="White Reference",
             command=self._white,
             width=calibration_button_width,
-        ).grid(row=2, column=0, padx=4, pady=4, sticky="w")
-        ttk.Label(calibration_frame, text="Sensor Zen").grid(
-            row=2, column=1, sticky="w", padx=(12, 4)
-        )
-        ttk.Entry(
-            calibration_frame, textvariable=self.white_ref_zenith_var, width=10
-        ).grid(row=2, column=2, sticky="w", padx=4)
+        ).grid(row=4, column=0, padx=4, pady=(6, 4), sticky="w")
         ttk.Label(
             calibration_frame,
             textvariable=self.white_last_measured_var,
             font=self.angles_status_font,
-        ).grid(row=2, column=3, sticky="w", padx=(10, 4))
+        ).grid(row=5, column=0, sticky="w", padx=4, pady=(0, 4))
 
         return calibration_frame
 
@@ -446,20 +493,8 @@ class GoniocontrolGUI(tk.Tk):
             polarizer_frame,
             text="Calibrate Polarizer",
             command=self._calibrate_polarizer,
+            state="disabled",
         ).grid(row=0, column=0, padx=4, pady=4, sticky="w")
-
-    def _build_plotting_panel(self, parent):
-        frm = ttk.Frame(parent)
-        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        ttk.Button(frm, text="View Snapshot", command=self._view).pack(
-            side=tk.LEFT, padx=4, pady=4
-        )
-        ttk.Button(frm, text="Plot Current Data", command=self._plot).pack(
-            side=tk.LEFT, padx=4, pady=4
-        )
-        ttk.Button(frm, text="VNIR Info", command=self._vnir_info).pack(
-            side=tk.LEFT, padx=4, pady=4
-        )
 
     def _set_busy(self, busy):
         self.after(0, lambda: self.busy_var.set("Busy" if busy else "Idle"))
@@ -474,6 +509,7 @@ class GoniocontrolGUI(tk.Tk):
     def _initialize_on_startup(self):
         self.workflow.connect_devices()
         self.workflow.load_runtime_state()
+        self.live_spectrum_service.start()
         self.after(0, self._sync_runtime_state_ui)
         self.after(0, self._update_device_status_labels)
         if self.state_obj.runtime_notice:
@@ -647,7 +683,7 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Restore spectrometer", run)
 
     def _optimize(self):
-        za = float(self.optimize_zenith_var.get() or "0")
+        za = float(self.sensor_zenith_var.get() or "0")
         self.controller.run_async(
             "Optimize", lambda: self.workflow.optimize(za, progress=self.log)
         )
@@ -667,7 +703,7 @@ class GoniocontrolGUI(tk.Tk):
 
     def _white(self):
         def run():
-            za = float(self.white_ref_zenith_var.get() or "0")
+            za = float(self.sensor_zenith_var.get() or "0")
             self.workflow.collect_white(za)
             timestamp = datetime.now().strftime("%H:%M:%S")
             self.after(
@@ -680,16 +716,32 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Collect white", run)
 
     def _ending_white(self):
-        za = float(self.white_ref_zenith_var.get() or "0")
+        za = float(self.sensor_zenith_var.get() or "0")
         self.controller.run_async(
             "Collect ending white", lambda: self.workflow.collect_ending_white(za)
         )
 
     def _calibrate_polarizer(self):
-        za = float(self.white_ref_zenith_var.get() or "0")
+        za = float(self.sensor_zenith_var.get() or "0")
         self.controller.run_async(
             "Calibrate polarizer",
             lambda: self.workflow.calibrate_polarizer(za, progress=self.log),
+        )
+
+    def _drive_sensor_zenith(self):
+        try:
+            target = float(self.sensor_zenith_var.get() or "0")
+        except ValueError:
+            messagebox.showerror(
+                "Invalid input",
+                "Enter a numeric target angle for Sensor Zenith.",
+            )
+            return
+        if not self._confirm_out_of_range("zenith", target):
+            return
+        self.controller.run_async(
+            "Drive Sensor Zenith to {:.2f} deg".format(target),
+            lambda: self.workflow.drive_motor_to_angle("zenith", target),
         )
 
     def _format_angle(self, angle):
@@ -852,6 +904,32 @@ class GoniocontrolGUI(tk.Tk):
         self._update_device_status_labels()
         self.after(2000, self._refresh_device_status)
 
+    def _refresh_live_plot(self):
+        if self._shutting_down:
+            return
+        latest, seq = self.live_spectrum_service.get_latest()
+        if latest is not None and seq != self._live_last_seq:
+            spectrum = latest.get("spectrum")
+            if spectrum is not None:
+                wl = getattr(self.workflow, "_wl", None)
+                if wl is None or len(wl) != len(spectrum):
+                    wl = np.arange(len(spectrum))
+                if self._live_line is None:
+                    (self._live_line,) = self._live_ax.plot(wl, spectrum)
+                else:
+                    self._live_line.set_data(wl, spectrum)
+                self._live_ax.relim()
+                self._live_ax.autoscale_view()
+                self.live_canvas.draw_idle()
+                self._live_last_seq = seq
+            source = latest.get("source", "unknown")
+            self.live_source_var.set(str(source))
+            stamp = datetime.fromtimestamp(latest.get("timestamp", 0)).strftime(
+                "%H:%M:%S"
+            )
+            self.live_timestamp_var.set(stamp)
+        self.after(150, self._refresh_live_plot)
+
     def _shutdown(self):
         if self._shutting_down:
             return
@@ -866,6 +944,7 @@ class GoniocontrolGUI(tk.Tk):
             self.busy_var.set("Shutting down")
             self.update_idletasks()
             try:
+                self.live_spectrum_service.stop()
                 self.workflow.shutdown()
             except Exception as exc:
                 self._shutting_down = False
