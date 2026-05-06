@@ -8,20 +8,22 @@ Use this checklist on Raspberry Pi + instrument to validate parity with legacy C
 - [ ] `Connect Devices` discovers expected motors (zenith, azimuth, sample, polarizers as available).
 - [ ] Spectrometer connects to `169.254.1.11:8080`.
 - [ ] Angle file loads correctly (`Angles.txt` or selected alternate file).
+- [ ] Runtime state directory is shown in startup log and points outside repo root (unless fallback is needed).
 
 ## Command parity
 
-- [ ] New dataset writes `outfile.txt` and starts empty in-memory dataset.
+- [ ] New dataset writes `outfile.txt` in runtime state directory and starts empty in-memory dataset.
 - [ ] Restore executes and VNIR info is readable.
-- [ ] Optimize stores `Oheader.npy`.
-- [ ] Dark stores `DC.npy`, `DriftDC.npy`, `DC_remainder.npy`.
-- [ ] White stores correct `White*.npy` and `AA*.npy` for current polarization mode.
-- [ ] Ending white stores expected `White*E.npy` + `WRZAE.npy`.
+- [ ] Optimize stores `Oheader.npy` in runtime state directory.
+- [ ] Dark stores `DC.npy`, `DriftDC.npy`, `DC_remainder.npy` in runtime state directory.
+- [ ] White stores correct `White*.npy` and `AA*.npy` in runtime state directory for current polarization mode.
+- [ ] Ending white stores expected `White*E.npy` + `WRZAE.npy` in runtime state directory.
 - [ ] Go Zenith moves to requested angle.
 - [ ] Zero All returns axes to zero positions.
 - [ ] Measure creates/updates `<outfile>.pickle` incrementally.
 - [ ] Measure final export writes `<outfile>.txt`.
 - [ ] Reflectance/radiance toggle changes stored payload type.
+- [ ] Legacy fallback: with only repo-root calibration files present, startup loads them and migrates copies to runtime state directory.
 
 ## Reliability
 

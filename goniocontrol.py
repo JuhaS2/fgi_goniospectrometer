@@ -1,901 +1,891 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Wed Jun 13 14:58:52 2018
-
-Control new SpaceGeoGonioSpectroPolariMeter ()
-
-@author: jouni
-
-Versions:
-2023-09-08  Juha Suomalainen
-* Added support for using non-existing paths and subdirs for output file. E.g. outfile = 'mysubdir/mydatafile'
-* "Restore" no longer asks to set a new file name. You need to do it manually separately.
-* Added support for TakeI-function to take average of spectra with syntax "TakeI(s,repeats=1)"
-  Such support has not been added to other polarized Take* functions!
-* Dark current and white reference are now collected with 25 averages.
-  Again, polarized WR still use just single measurements 
-* Measure task now asks for how many averages to take at each angle.
-* Improved error handling. User commands cannot anymore make the program crash. 
-  In case of error, the exception traceback shown on screen but measurements can be continued normally.
-* Cleaned up code and added commenting.
-    
-2023-09-01  Juha Suomalainen
-* VNIR dark current was not corrected perfectly with ASD maths. 
-  Added in Dark-function a measurement of a dark radiance spectrum.
-  This is subtracted from all later radiances.
-  WARNING! THIS HAS BEEN IMPLEMENTED ONLY ON SINGLE POLARIZATION MATHS. IF THIS WORKS, ADD THE FIX ALSO TO POLARIZATION MATHS
-    
-2023-08-30  Juha Suomalainen
-* "What do you want, Sir?"-input accepts now also lowercase letters
-* Options now show the "Go"-feature that drives sensor zenith angle
-* Command "0" switches the data saving mode between the radiance and reflectance mode. Default is reflectance mode
-
-2023-08-30  Jouni Peltoniemi
-* Original version
-
-"""
-
-# TODO:
-# * Add residual dark current correction also to polarized Take* measurements!!!
-# * Add repeats-parameter to also the polarized Take* measurements? Implement also in polarized White reference measurement?
-# * move multiwave plate to lamp. horizontal
-# * take calibration from LCC
-# * find a way to extend the calibration to SWIR
-# 
-
-#%% Imports
-
-import numpy as np
-import matplotlib.pyplot as plt
-import socket
-import time
-import pickle
-import json
 import os
-import traceback
+import subprocess
+import sys
+import tkinter as tk
+import tkinter.font as tkfont
+from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from goniocontrol_app.gui_controller import GuiController
+from goniocontrol_app.services.mock_services import (
+    MockLCCService,
+    MockMotorService,
+    MockSpectrometerService,
+)
+from goniocontrol_app.services.persistence_service import PersistenceService
+from goniocontrol_app.state import AppState
+from goniocontrol_app.workflow_service import WorkflowService
 
 
-try: 
-    from pyximc import *
-except ImportError as err:
-    print ("Can't import pyximc module. The most probable reason is that you changed the relative location of the testpython.py and pyximc.py files. See developers' documentation for details.")
-    exit()
-except OSError as err:
-    print ("Can't load libximc library. Please add all shared libraries to the appropriate places. It is decribed in detail in developers' documentation. On Linux make sure you installed libximc-dev package.\nmake sure that the architecture of the system and the interpreter is the same")
-    exit()
+class GoniocontrolGUI(tk.Tk):
+    MOTOR_ROLES = (
+        ("zenith", "Sensor Zenith"),
+        ("azimuth", "Sensor Azimuth"),
+        ("sample", "Sample Azimuth"),
+    )
+    MOTOR_LIMITS = {
+        "zenith": (-90.0, 90.0),
+        "azimuth": (-360.0, 360.0),
+        "sample": (-360.0, 360.0),
+    }
 
-import LCClib
-from ASDlib import *
+    def __init__(self):
+        super().__init__()
+        self.title("Goniocontrol GUI")
+        self.geometry("800x416")
+        self.workspace = Path(__file__).resolve().parent
 
-#%% Helping functions
-
-
-def plottaile(wl,data):
-    l=len(data)
-    za=np.zeros(l)
-    I515=np.zeros(l)
-    Q515=np.zeros(l)
-    U515=np.zeros(l)
-    V515=np.zeros(l)
-    i=0
-    for datum in data:
-        #print('datum:',datum)
-        SS=datum[4]
-        
-        plt.plot(wl,SS[0])   
-        plt.ylim(0.0,2.0)
-        plt.xlabel('wavelength/nm')
-        plt.ylabel('BRF')
-        plt.show()
-        plt.plot(wl,SS[1]/SS[0],'r-',label='Q')
-        plt.plot(wl,SS[2]/SS[0],'b-',label='U')
-#        plt.plot(wl,SS[3]/SS[0],'g-',label='V')
-        plt.ylim(-1.0,1.0)
-        plt.xlabel('wavelength/nm')
-        plt.ylabel('Polarization')
-        plt.legend()
-        plt.show()
-        za[i]= datum[2]
-        I515[i]=datum[4][0][515-350]
-        Q515[i]=datum[4][1][515-350]
-        U515[i]=datum[4][2][515-350]
-#        V515[i]=datum[4][3][515-350]
-        i+=1
-    plt.plot(za,I515)
-    plt.xlabel('zenith angle / deg')
-    plt.ylabel('BRF')
-    plt.show()
-    plt.plot(za,Q515/I515,'r.',label='Q')
-    plt.plot(za,U515/I515,'b.',label='U')
-#    plt.plot(za,V515/I515,'g.',label='V')
-    plt.xlabel('zenith angle')
-    plt.ylabel('Polarization')
-    plt.legend()
-    plt.show()
-    
-def plot2(wl,datum):
-   
-    SS=datum[5]
-    fig = plt.figure()
-    ax1 = fig.add_subplot(121)
-    ax2 = fig.add_subplot(122)
-    ax1.plot(wl,SS[0])   
-    ax1.set_ylim(0.0,1.0)
-    ax1.set_xlabel('wavelength/nm')
-    ax1.set_ylabel('BRF')
-    
-    ax2.plot(wl,SS[1]/SS[0],'r-',label='Q')
-    ax2.plot(wl,SS[2]/SS[0],'b-',label='U')
-#        plt.plot(wl,SS[3]/SS[0],'g-',label='V')
-    ax2.set_ylim(-0.50,0.50)
-    ax2.set_xlabel('wavelength/nm')
-    ax2.set_ylabel('Polarization')
-    ax2.legend()
-    plt.show()
-
-    
-    
-t0=time.time()
-
-def TakePolSequence(P_id,s,pcalib,wg_pols,retardances,P0):
-    subdata=[]
-    t0=time.time()
-    for wg_pol in wg_pols:
-        result = lib.command_move(P_id, int(80*wg_pol)+P0.Position, P0.uPosition)
-        result = lib.command_wait_for_stop(P_id, 10)
- 
-        for ret in retardances:
-             LCClib.LCC.write('RE='+str(ret))
-             print('Retardance=',ret,' polangle=',wg_pol)#,time.process_time(),time.time()-t0)
-#             t0=time.time()
-             header,spectrum=ReadASD(s)
-             driftM=header[22]
-             subdata.append((ret,wg_pol,spectrum,driftM))
-        LCClib.LCC.write('RE='+str(retardances[0])) # slower movement back, starting now
-   
-    result=LCClib.LCC.read() # to empty the buffer  
-    result = lib.command_move(P_id,P0.Position, P0.uPosition)  # start moving to zero for next measurement
-    
-    return subdata
-
-def TakePolSequence44(P_id,L_id,s,Pcalib,Lcalib,wg_pols,retardances,ls_pols,P0,L0):
-    subdata=[]
-    t0=time.time()
-    for ls_pol in ls_pols:
-        result = lib.command_move(L_id, int(80*ls_pol)+L0.Position, L0.uPosition)       
-        for wg_pol in wg_pols:  
-            result = lib.command_move(P_id, int(80*wg_pol)+P0.Position, P0.uPosition)
-            result = lib.command_wait_for_stop(L_id, 10) 
-            result = lib.command_wait_for_stop(P_id, 10)
-            
-            for ret in retardances:
-                LCClib.LCC.write('RE='+str(ret))
-                print('Retardance=',ret,' sensor polangle=',wg_pol,' lamp polangle=',ls_pol)#,time.process_time(),time.time()-t0)
-                #             t0=time.time()
-                header,spectrum=ReadASD(s)
-                driftM=header[22]
-                subdata.append((ret,wg_pol,ls_pol,spectrum,driftM))
-            LCClib.LCC.write('RE='+str(retardances[0])) # slower movement back, starting now
-   
-    result=LCClib.LCC.read() # to empty the buffer  
-    result = lib.command_move(P_id,P0.Position, P0.uPosition)  # start moving to zero for next measurement
-    result = lib.command_move(L_id,L0.Position, L0.uPosition)
-    return subdata
-
-def TakePolSequenceIQU(P_id,s,pcalib,wg_pols,retardances,P0):
-    subdata=[]
-    t0=time.time()
-    LCClib.LCC.write('RE=0')
-    for wg_pol in wg_pols:
-        result = lib.command_move(P_id, int(80*wg_pol)+P0.Position, P0.uPosition)
-        result = lib.command_wait_for_stop(P_id, 10)
-        ret=0.0
-        
-        print('Retardance=',0,' polangle=',wg_pol)#,time.process_time(),time.time()-t0)
-#             t0=time.time()
-        header,spectrum=ReadASD(s)
-        driftM=header[22]
-        subdata.append((ret,wg_pol,spectrum,driftM))
-# move next?
-#    LCClib.LCC.write('RE=0')     
-    result=LCClib.LCC.read() # to empty the buffer  
-    result = lib.command_move(P_id,P0.Position, P0.uPosition)  # start moving to zero for next measurement
-    return subdata
-
-def TakeI(s, repeats=1):
-#    t0=time.time()
-#             t0=time.time()
-    # collect data from spectrometer
-    spectum_sum = 0
-    header,spectrum=ReadASD1(s,repeats)
-    driftM=header[22]
-    ret=0.0
-    wg_pol=0.0
-    # store to subdata format and return
-    subdata=[]
-    subdata.append((ret,wg_pol,spectrum,driftM))
-    return subdata
-
-NcalRs=LCClib.NRets #????
-calpols=45*np.arange(8)
-calrets=103*np.arange(NcalRs)
-def TakeCalSequence(P_id,s,P0):  # probably not needed any more
-    subdata=[]
-    t0=time.time()
-    for wg_pol in calpols:
-        result = lib.command_move(P_id, int(80*wg_pol)+P0.Position, P0.uPosition)
-        result = lib.command_wait_for_stop(P_id, 10)
-        for ret in calrets:
-             LCC.write('RE='+str(ret))
-             print('Retardance=',ret,' polangle=',wg_pol)
-             header,spectrum=ReadASD(s)             
-             driftM=header[22]
-             subdata.append((ret,wg_pol,spectrum,driftM))
-# move next?
-          
-    return subdata  #makeStokes(subdata,DC,WS,polcal)
-
-def CalPol(data):
-    Q0=0.0
-    U0=0.0
-    for datum in data:
-        Q0+=np.sum(datum[4][1][100:500])
-        U0+=np.sum(datum[4][2][100:500])
-    alpha=0.5*np.arctan2(U0,Q0)
-    if (np.sin(2*alpha)*U0+np.cos(2*alpha)) <0.0:
-        alpha=alpha+np.pi*0.5
-    print('calibrated alpha: ',alpha)
-    return alpha
-
-#%% CONNECT TO MOTOR CONTROLLERS
-
-Brot=False # until found
-SNames=["xi-com:///dev/ttyACM0","xi-com:///dev/ttyACM1","xi-com:///dev/ttyACM2","xi-com:///dev/ttyACM3","xi-com:///dev/ttyACM4","xi-com:///dev/ttyACM5","xi-com:///dev/ttyACM6","xi-com:///dev/ttyACM7","xi-com:///dev/ttyACM8","xi-com:///dev/ttyACM9","xi-com:///dev/ttyACM10"        ]
-for StandaName in SNames:
-    #print(StandaName)
-    StandaName=StandaName.encode() 
-    id = lib.open_device(StandaName)
-    #print(id)
-    x_serial = c_uint()
-    result = lib.get_serial_number(id, byref(x_serial))
-    #print(x_serial.value)
-    if (x_serial.value==13536 +0*12202): # sensor polariser
-        P_id=id
-        Pcalib=calibration_t()
-        eeP=engine_settings_t()
-        lib.get_engine_settings(P_id,byref(eeP))
-        Pcalib.MicrostepMode=eeP.MicrostepMode
-        Pcalib.A=1.0/80.0
-        print(StandaName,id,x_serial.value)
-    elif (x_serial.value==99+13536): # lamp polariser
-        L_id=id
-        Lcalib=calibration_t()
-        eeL=engine_settings_t()
-        lib.get_engine_settings(L_id,byref(eeL))
-        Lcalib.MicrostepMode=eeL.MicrostepMode
-        Lcalib.A=1.0/80.0
-        print(StandaName,id,x_serial.value)
-    elif (x_serial.value==12224): # sample motor
-        B_id=id
-        Brot=True
-        Bcalib=calibration_t()
-        eeB=engine_settings_t()
-        lib.get_engine_settings(B_id,byref(eeB))
-        Bcalib.MicrostepMode=eeB.MicrostepMode
-        Bcalib.A=1.0/100.0
-        Bmove=move_settings_t()
-        lib.get_move_settings(B_id,byref(Bmove))
-        
-        Bmove.Decel=Bmove.Accel
-        Bmove.Speed=1000
-        print('Bmove:',Bmove.Accel,Bmove.Decel,Bmove.Speed)
-        lib.set_move_settings(B_id,byref(Bmove))
-        print(StandaName,id,x_serial.value)
-    elif (x_serial.value==13217): # zenith motor
-        Z_id=id
-        Zcalib=calibration_t()
-        eeZ=engine_settings_t()
-        lib.get_engine_settings(Z_id,byref(eeZ))
-        Zcalib.MicrostepMode=eeZ.MicrostepMode
-        Zcalib.A=1.0/100.0
-        Zmove=move_settings_t()
-        lib.get_move_settings(Z_id,byref(Zmove))
-        Zmove.Decel=Zmove.Accel
-        print('Zmove;',Zmove.Accel,Zmove.Decel,Zmove.Speed)
-        lib.set_move_settings(Z_id,byref(Zmove))
-        print(StandaName,id,x_serial.value)
-    elif (x_serial.value==13225): # azimuth motor
-        A_id=id
-        Acalib=calibration_t()
-        eeA=engine_settings_t()
-        lib.get_engine_settings(A_id,byref(eeA))
-        Acalib.MicrostepMode=eeA.MicrostepMode
-        Acalib.A=1.0/100.0
-        Amove=move_settings_t()
-        lib.get_move_settings(A_id,byref(Amove))
-        Amove.Decel=Amove.Accel 
-        
-       
-#        Amove.Speed=1000  # hopefully this is less
-        lib.set_move_settings(A_id,byref(Amove))
-        print('Amove:',Amove.Accel,Amove.Decel,Amove.Speed)
-        print(StandaName,id,x_serial.value)
- #       STOP
-    else:
-        lib.close_device(byref(cast(id, POINTER(c_int))))
-        print('unknown motor:',x_serial.value,'If stuck here, check all connections to motors, controllers, and power, and reboot!')
- 
-
-
-
-print("Move manually all motors to zero position! (zenith arm, azimuth, sample, polarizers, ...) ")
-input("Press Return, when done!")
-
-
-Z_pos0 = get_position_t()
-result = lib.get_position(Z_id, byref(Z_pos0))
-print("Position: {0} steps, {1} microsteps".format(Z_pos0.Position, Z_pos0.uPosition))
-
-Z_pos1=get_position_calb_t() 
-result = lib.get_position_calb(Z_id, byref(Z_pos1),byref(Zcalib))
-print("Position: {0} deg, {1} encoder".format(Z_pos1.Position, Z_pos1.EncPosition))
-
-A_pos0 = get_position_t()
-result = lib.get_position(A_id, byref(A_pos0))
-print("Position: {0} steps, {1} microsteps".format(A_pos0.Position, A_pos0.uPosition))
-
-A_pos1=get_position_calb_t() 
-result = lib.get_position_calb(A_id, byref(A_pos1),byref(Acalib))
-print("Position: {0} deg, {1} encoder".format(A_pos1.Position, A_pos1.EncPosition))
-
-if Brot:
-    B_pos0 = get_position_t()
-    result = lib.get_position(B_id, byref(B_pos0))
-    print("Position: {0} steps, {1} microsteps".format(B_pos0.Position, B_pos0.uPosition))
-
-    B_pos1=get_position_calb_t() 
-    result = lib.get_position_calb(B_id, byref(B_pos1),byref(Bcalib))
-    print("Position: {0} deg, {1} encoder".format(B_pos1.Position, B_pos1.EncPosition))
-else:
-    print('No sample rotator.')
-
-try:
-    P_pos0 = get_position_t()
-    result = lib.get_position(P_id, byref(P_pos0))
-    print("Position: {0} steps, {1} microsteps".format(P_pos0.Position, P_pos0.uPosition))
-
-    P_pos1=get_position_calb_t() 
-    result = lib.get_position_calb(P_id, byref(P_pos1),byref(Pcalib))
-    print("Position: {0} deg, {1} encoder".format(P_pos1.Position, P_pos1.EncPosition))
-except:
-    print("no polariser")
-    npols=1
-try:
-    L_pos0 = get_position_t()
-    result = lib.get_position(L_id, byref(L_pos0))
-    print("Position: {0} steps, {1} microsteps".format(L_pos0.Position, L_pos0.uPosition))
-
-    L_pos1=get_position_calb_t() 
-    result = lib.get_position_calb(L_id, byref(L_pos1),byref(Lcalib))
-    print("Position: {0} deg, {1} encoder".format(L_pos1.Position, L_pos1.EncPosition))
-    npols=16
-except:
-    print("Light polariser not set")
-    npols=np.minimum(npols,3)
-
-#result = lib.command_move_calb(P_id, byref(P_pos1), byref(pcalib))
-
-
-wg_pols=np.array([0.0,45.0,90.0,135.0,180.0,225.0,270.0,315.0])####+P_pos1.Position
-wg_pols=np.array([0,45,90,135])
-#wg_pols=np.array([0,45])#,90,135])
-lamppol=99
-sunpols=[0]#,90]
-angles=[]
-anglef=open("Angles.txt")
-for line in anglef:
-    if (line[0]=='S'):
-        break
-    if (line[0]!='#'):
-        angs=np.array(line.split(),dtype="float")  
-        #print(angs)
-        angles.append(angs)
-anglef.close()
-NA=len(angles)
-print('Just checking, that everythigh moves and returns to original position. This tells the positive direction.')
-ze=0
-az=0
-be=0
-result = lib.command_move(A_id,int(az*100+A_pos0.Position),A_pos0.uPosition)
-print(result)
-result = lib.command_move(Z_id,int(ze*100+Z_pos0.Position),Z_pos0.uPosition)
-print(result)
-result = lib.command_move(B_id,int(be*100+B_pos0.Position),B_pos0.uPosition)
-print(result)
-#result = lib.command_move(P_id,int(be*100+P_pos0.Position),P_pos0.uPosition)
-result = lib.command_wait_for_stop(Z_id, 10)
-print(result)
-result = lib.command_wait_for_stop(A_id, 10)
-print(result)
-#result = lib.command_wait_for_stop(P_id, 10)
-result = lib.command_wait_for_stop(B_id, 10)
-print(result)
-result = lib.command_move(A_id,int(A_pos0.Position),A_pos0.uPosition)
-result = lib.command_move(Z_id,int(Z_pos0.Position),Z_pos0.uPosition)
-result = lib.command_move(B_id,int(B_pos0.Position),B_pos0.uPosition)
-#result = lib.command_move(P_id,int(P_pos0.Position),P_pos0.uPosition)
-
-
-
-#%% CONNECT TO SPECTROMETER    
-# define connection to ASD spectrometer
-HOST = '169.254.1.11'    # The ASD spectrometer remote host
-PORT = 8080              # The same port as used by the server
-# Connect to spectrometer
-s =  socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-print('connecting:',HOST,PORT)
-s.connect((HOST, PORT))
-print('connected.')
-print(s.recv(128)) # greetings
-
-#%% RESTORE PREVIOUS MEASUREMENT STATE
-
-
-# init data structure
-data=[]
-
-# get VNIR info and generate list of wavelengths
-Vwl1,Vwl2,VDCC=VNIRinfo(s)
-wl=Vwl1+np.arange(Nwl)
-
-# read previous dark current and white reference values
-DC=np.load('DC.npy')
-driftDC=np.load('DriftDC.npy') 
-if npols==3:
-   AA=np.load("AA3.npy")
-   WC=np.load("White3.npy")
-elif npols==4:
-   AA=np.load("AA4.npy")
-   WC=np.load("White4.npy")
-elif npols==16:
-   AA=np.load("AA44.npy")
-   WC=np.load("White44.npy")
-elif npols==1:
-   WC=np.load("White1.npy")
-
-try:  # smooth restart with ongoing measurement  
-    of=open('outfile.txt')
-    outfile=of.readline()
-    print('Outfilename:',outfile)
-    of.close()
-#    outfile=np.load("outfile.npy")
-    try:
-        with open(outfile+'.pickle', 'rb') as handle:
-            data=pickle.load(handle)
-            print('Old data exist. Appending data, but not clever enough to start, where it stopped, sorry.')
-    except:
-        data=[]
-except:
-    outfile="Test00"
-    print('Outfilename:',outfile)
-
-# for a warm start, read and set old Optimiser parameters
-Oheader=np.load('Oheader.npy')
-SetOpt(s,Oheader[2],Oheader[3],Oheader[4])
-itime=Oheader[2]
-    
-#%% MAIN LOOP    
-# Is the operating mode saving reflectances or radiances?
-reflectance_mode = True
-print('Operating mode is REFLECTANCE. Use command "S" to switch to radiance.')
-
-# Loop asking for and performing commands until user quits with "Q"
-cmd_queue = []
-while True:
-    
-    # Ask user for next command, if there are no commands in queue
-    if len(cmd_queue) == 0:
-        try:
-            print('\nWhat do you want, Sir?')
-            if reflectance_mode:
-                goo=input('New, Restore, Optimize, Dark, White, [View], Measure, Ending white, [Go], [Plot], [Zero], Quit.\n')  
-            else:
-                goo=input('New, Restore, Optimize, Dark, Measure, [Go], [Zero], Quit.\n')  
-            # format command to single uppercase letter
-            go=goo[0].upper()
-            # add command to queue
-            cmd_queue.append(go)
-            # print(go)
-        except:
-            print('Wrong input.')
-
-    # get the first command from the command queue
-    if len(cmd_queue) > 0:
-        go = cmd_queue.pop(0)
-    else:
-        go = ''
-        
-    # Perform the commanded task
-    try:
-        if (go=='R'): # RESTORE
-            print('RESTORE')
-            Restore(s)
-            # outfile=input('Output file name?\n')
-            # of=open('outfile.txt','w')
-            # of.write(outfile)
-            # of.close()
-            # np.save('outfile',outfile)
-            # data=[]
-            Vwl1,Vwl2,VDCC=VNIRinfo(s)
-            print('VDCC:',VDCC)
-            
-        elif (go=='N'): # START NEW DATASET TO A NEW OUTPUT FILE
-            print('NEW DATASET')
-            # start new measurement without restore    
-            # ask for output file 
-            outfile=input('Output file name?\n')
- 
-            # save outputfile path to a txt file, for smooth continue
-            of=open('outfile.txt','w')
-            of.write(outfile)
-            of.close()
-            # save it also in numpy format
-            np.save('outfile',outfile)
-            
-            # create the subdir if user defined file in one
-            subdirpath = os.path.split(outfile)[0]
-            if subdirpath!='':
-                os.makedirs(subdirpath, exist_ok=True)
-            
-            # reset data 
-            data=[]
-
-        # elif (go=='F'): # IS THIS SOME OUTDATED VERSION OF "N" 
-        #     outfile=input('Output file name?'\n)
-        #     out=open(outfile+'.txt','w')
-        #     for d in data:
-        #         out.write(str(d)+'\n')
-        #     out.close()    
-        #     with open(outfile+'.pickle', 'wb') as handle:
-        #         pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
-           
-        elif (go=='O'): # OPTIMIZE SPECTROMETER
-            print('OPTIMIZE')
-            # Instruct user and ask at which zenith angle the optimization will be collected on
-            WRZA=np.float(input('Put white reference! Give WR zenith angle!\n'))
-            # Drive to the angle 
-            result = lib.command_move(Z_id,int(WRZA*100+Z_pos0.Position),Z_pos0.uPosition) # Move to selected position
-            result = lib.command_wait_for_stop(Z_id, 10)
-            # optimize the spectrometer
-            for i in range(25):  # sometoimes optimisation fails. retry a few times
-                Oheader=Optimize(s)  
-                if (Oheader[0]==100):
-                    break
-            itime=Oheader[2]        
-            np.save('Oheader',Oheader)
-            print('Optimized:',Oheader,itime)
-            #Vwl1,Vwl2,VDCC=VNIRinfo(s)
-            
-            # after optimization it is mandatory to take a new dark current
-            cmd_queue.append('D')
-            
-        elif (go=='D'): # DARK CURRENT
-            print('DARK CURRENT')
-#            DC,DriftDC=DarkCurrent(s,itime)
-            DC,DriftDC=DarkCurrent2(s,25)        
-               
-            # The ASD's mathematics for DC in VNIR are not working perfectly. 
-            # Thus we must now collect a radiance spectrum that should be zero, but isn't
-            Idata=TakeI(s, repeats=25)
-            DC_remainder=MakeI(Idata,DC,driftDC,VDCC)
-            
-            np.save('DC',DC)
-            np.save('DriftDC',DriftDC)
-            np.save('DC_remainder',DC_remainder)
-            # plt.plot(wl,DC)
-            # plt.show()
-            #Vwl1,Vwl2,VDCC=VNIRinfo(s)
-            print('Dark current collected.')
-            
-        elif (go=='S'): # SWITCH BETWEEN REFLECTANCE AND RADIANCE MODE
-            print('SWITCH BETWEEN REFLECTANCE AND RADIANCE')
-            # switch between reflectance and radiance mode
-            reflectance_mode = not reflectance_mode
-            if reflectance_mode:
-                print('Operating mode is REFLECTANCE. Use command "S" to switch to radiance.')
-            else:
-                print('Operating mode is RADIANCE. Use command "S" to switch to reflectance.')
-                
-        elif (go[0]=='C'): # CALIBRATE POLARIZER
-            print('CALIBRATE POLARIZER')
-            PCZA=np.float(input('Calibrating polarizer. Give a forward zenith angle (>0) of max polarization and ensure full left-right symmetry!\n'))
-            result = lib.command_move(Z_id,int(PCZA*100+Z_pos0.Position),Z_pos0.uPosition)
-            result = lib.command_wait_for_stop(Z_id, 10)
-              
-            caldata=TakePolSequence(P_id,s,pcalib,wg_pols,LCClib.retardances,P_pos0) 
-            #             cal=CalAA(caldata,DC,driftDC,VDCC)
-            #             AA=MakeAA(WRdata)
-            #             np.save('AA',AA)
-            alpha=PolCal(caldata)
-            P_pos0.Position+=alpha*80/deg
-            print('cal taken.')
-             
-        # elif (go[0]=='L'): # SOME UNKNOWN NON-FUNCTIONING FEATURE
-        #      print('This is not really working.')
-        #      RetardanceTable=LCClib.LCCcals(wl)
-        #      np.save('RetardanceTable',RetardanceTable)
-             
-        elif (go[0]=='W'): # WHITE REFERENCE
-             print('WHITE REFERENCE')
-             WRZA=np.float(input('Put white reference! Give WR zenith angle!\n'))
-             result = lib.command_move(Z_id,int(WRZA*100+Z_pos0.Position),Z_pos0.uPosition)
-             result = lib.command_wait_for_stop(Z_id, 10)
-             
-             if npols==16:
-                 WRdata=TakePolSequence44(P_id,L_id,s,Pcalib,Lcalib,wg_pols,LCClib.retardances,P_pos0,L_pos0)            
-                 AA=MakeAA44(WRdata)
-                 np.save('AA44',AA)
-                 WC=MakeMuller(WRdata,DC,driftDC,VDCC,AA)
-                 np.save("White44",WC)
-             elif npols==3:
-                 WRdata=TakePolSequenceIQU(P_id,s,Pcalib,wg_pols,LCClib.retardances,P_pos0)              
-                 AA=MakeAA3(WRdata)
-                 np.save('AA3',AA)
-                 WC=MakeStokesIQU(WRdata,DC,driftDC,VDCC,AA)
-                 np.save("White3",WC)
-             elif npols==1:
-                 WRdata=TakeI(s, repeats=25)
-                 WC=MakeI(WRdata,DC,driftDC,VDCC) - DC_remainder
-                 np.save("White1",WC)
-             else:
-                 print('not yet ready')
-                 stop
-                 AA=MakeAA4(WRdata)
-                 np.save('AA4',AA)
-                 WC=MakeMuller(WRdata,DC,driftDC,VDCC,AA)
-                 np.save("White4",WC)
-             np.save("WRZA",WRZA)
-             plt.plot(wl,WC[0,:])
-             plt.show()
-             print('WR taken.')
-             
-             
-        elif (go[0]=='E'): # ENDING WHITE REFERENCE
-            print('WHITE REFERENCE (END)')
-            # Instruct user and ask for zenith angle
-            WRZA=np.float(input('Put white reference! Give WR zenith angle!\n'))
-            # drive goniometer to the angle
-            result = lib.command_move(Z_id,int(WRZA*100+Z_pos0.Position),Z_pos0.uPosition)
-            result = lib.command_wait_for_stop(Z_id, 10)
-            # collect spectometer data
-            if npols==16:
-                WRdata=TakePolSequence44(P_id,L_id,s,Pcalib,Lcalib,wg_pols,LCClib.retardances,P_pos0,L_pos0)            
-                
-                WCE=MakeMuller(WRdata,DC,driftDC,VDCC,AA)
-                np.save("White44E",WCE)
-            elif npols==3:
-                WRdata=TakePolSequenceIQU(P_id,s,Pcalib,wg_pols,LCClib.retardances,P_pos0)              
-               
-                WCE=MakeStokesIQU(WRdata,DC,driftDC,VDCC,AA)
-                np.save("White3E",WCE)
-            elif npols==1:
-                WRdata=TakeI(s, repeats=25)
-                WCE=MakeI(WRdata,DC,driftDC,VDCC) - DC_remainder
-                np.save(outfile+"White1E",WCE)
-                WRE=MakeRef(WC,WCE)
-            else:
-                print('not yet ready')
-                stop
-                AA=MakeAA4(WRdata)
-                np.save('AA4',AA)
-                WC=MakeMuller(WRdata,DC,driftDC,VDCC,AA)
-                np.save("White4",WC)
-            np.save("WRZAE",WRZA)
-            plt.plot(wl,WCE[0,:])
-            plt.show()
-            plt.plot(wl,WRE[0,:])
-            plt.show()
-            print('WR taken.')
-            
-        elif (go[0]=='G'): # GO TO ZENITH ANGLE
-            print('GO. DRIVE SENSOR ZENITH')
-            # Ask for zenith angle
-            ZA=np.float(input('Give zenith angle!\n'))
-            # drive goniometer to the angle
-            result = lib.command_move(Z_id,int(ZA*100+Z_pos0.Position),Z_pos0.uPosition)
-            result = lib.command_wait_for_stop(Z_id, 10)
-
-        # elif (go[0]=='A'): # TAKE SINGLE SPECTRUM AND PLOT A REFLECTANCE SPECTRUM ?????
-        #      print('Continuous mode.')
-             
-        #      header,spectrum=ReadASD(s)
-             
-        #      for i in range(1):
-        #          plt.plot(wl,(spectrum[:,i]-DC)/WC[0,0,:])#+VDCC+(driftM-driftDC)#/WC[0,:])
-        #      plt.ylim(-0.1,1.0)
-        #      plt.show()  
-
-        elif (go[0]=='V'): # TAKE POLARIZATION DATA AND VIEW IT   
-            try:
-                # takes just one sequence in current position 
-                if (npols==1):
-                    Vdata=TakeI(s)
-                    fig, ((ax1, ax2),(ax3,ax4)) = plt.subplots(2, 2,figsize=(8,8))
-                    VI=MakeI(Vdata,DC,driftDC,VDCC) - DC_remainder
-                    ax3.plot(wl,Vdata[0][2])
-                    ax3.plot(wl,VI[0,:])
-                    RV=MakeRef(VI,WC)
-                    ax4.plot(wl,RV[0,:])
-                    ax4.plot(wl,RV[0,:]*10)
-                    ax4.plot(wl,RV[0,:]*100)
-                    ax4.set_ylim(0.0,10.0)
-                    ax1.plot(wl,DC)
-                    ax2.plot(wl,WC[0,:])
-                    plt.savefig('GonioViews.png')
-                    plt.show()
-                    
-                else:    
-                   Bdata=TakePolSequenceIQU(P_id,s,Pcalib,wg_pols,LCClib.retardances,P_pos0)
-                   AA3=MakeAA3(Bdata)
-                   d0=MakeStokesIQU(Bdata,DC,driftDC,VDCC,AA3)
-                   
-                   plt.plot(wl,d0[0,:])
-                   plt.plot(wl,d0[1,:])
-                   plt.plot(wl,d0[2,:])
-                   #plt.plot(wl,d0[3,:])
-                   plt.ylabel('raw number')
-                   plt.show()
-                   r0=MakeRef(d0,WC)
-                   plt.plot(wl,r0[0,:])
-                   plt.plot(wl,r0[1,:])
-                   plt.plot(wl,r0[2,:])
-                   #plt.plot(wl,r0[3,:])
-                   plt.ylim(-0.1,1.1)
-                   plt.ylabel('reflectance factors I,Q,U')
-                   plt.show()
-                   plt.plot(wl,r0[1,:]/r0[0,:])
-                   plt.plot(wl,r0[2,:]/r0[0,:])
-                   #plt.plot(wl,r0[3,:])
-                   plt.ylim(-0.5,1.0)
-                   plt.ylabel('degree of polarisation')
-                   plt.show()
-            except:
-                print('Failed')
-               
-               
-        elif (go=='I'): # SHOW VNIR INFO  
-            Vwl1,Vwl2,VDCC=VNIRinfo(s)
-            print(Vwl1,Vwl2,VDCC)
-
-        elif (go=='P'): # PLOT DATA
-            plottaile(wl,data)
-            
-        elif (go=='Z'): # DRIVE ALL MOTORS TO ZERO POSITION
-            # move erevrything to zero
-            result = lib.command_move(A_id,int(A_pos0.Position),A_pos0.uPosition)
-            result = lib.command_move(Z_id,int(Z_pos0.Position),Z_pos0.uPosition)
-            if Brot:
-                result = lib.command_move(B_id,int(B_pos0.Position),B_pos0.uPosition)
-            if (npols >1):
-                result = lib.command_move(P_id,int(B_pos0.Position),B_pos0.uPosition)  
-            
-        elif (go=='M'): # COLLECT MEASUREMENT SEQUENCE AND SAVE IT
-            print('MEASURE')
-            # ask user how many spectra to repeat at each angle
-            ans = input('How many spectra to average at each angle?\n')
-            if len(ans) == 0:
-                print('1')
-                repeats = 1
-            else:
-                repeats = int(ans)
-        
-            # take measurement at each angle defined in Angles.txt
-            for sz,sa00,ze,az,be,wwa,wwb in angles:         
-                # Give commands to drive goniometer motors to the desired angle
-                print('moving to:',ze,az,be,'/',NA)             
-                Z_pos2=Z_pos1
-                Z_pos2.Position=ze
-                A_pos2=A_pos1
-                A_pos2.Position=az
-                if Brot:
-                    B_pos2=B_pos1
-                    B_pos2.Position=be
-                    result = lib.command_move(B_id,int(be*100+B_pos0.Position),B_pos0.uPosition)    
-                result = lib.command_move(A_id,int(az*100+A_pos0.Position),A_pos0.uPosition)
-                result = lib.command_move(Z_id,int(ze*100+Z_pos0.Position),Z_pos0.uPosition)
-
-                # while driving, save all data to output file               
-                # (Why is this done here and now, as we dont have yet new data yet?)
-                with open(outfile+'.pickle', 'wb') as handle:
-                    pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                    
-                # make sure spectrometer settings are set correctly, in case something is changed
-                SetOpt(s,Oheader[2],Oheader[3],Oheader[4])   
-                
-                # Wait for all motors to stop driving 
-                result = lib.command_wait_for_stop(Z_id, 10)
-                result = lib.command_wait_for_stop(A_id, 10)
-                result = lib.get_position_calb(Z_id, byref(Z_pos1),byref(Zcalib))
-                result = lib.get_position_calb(A_id, byref(A_pos1),byref(Acalib))
-
-                # skip collecting spectral data on this angle if it has weight of zero                
-                if (wwb==0.0):
-                    print('Jumping one value')
-                    continue
-                
-                # TEMPORARY CODE BLOCK: Warning about dark current not yet being handled properly with npols>1
-                # you can delete this whole warning code block once this is fixed
-                # Every row with dark current correction measurement like MakeI or Make* (except in dark current) should have DC_remainder removed/handled.
-                if npols>1:
-                    raise Warning('Dark current residual is handled only in case npols==1. You really should fix this before taking any more polarized measurements!')
-                
-                # Take spectrometer measurement(s) with wanted polarizations
-                if (npols==16):
-                    subdata=TakePolSequence44(P_id,L_id,s,Pcalib,Lcalib,wg_pols,LCClib.retardances,P_pos0,L_pos0)            
-                    SS=MakeMuller(subdata,DC,driftDC,VDCC,AA)  
-                    RR=MakeRef44(SS,WC)
-                elif (npols==3):    
-                    subdata=TakePolSequenceIQU(P_id,s,Pcalib,wg_pols,LCClib.retardances,P_pos0)
-                    SS=MakeStokesIQU(subdata,DC,driftDC,VDCC,AA)  
-                    RR=MakeRef(SS,WC)
-                elif (npols==1):    
-                    subdata=TakeI(s, repeats=repeats)
-                    SS=MakeI(subdata,DC,driftDC,VDCC) - DC_remainder  
-                    RR=MakeRef(SS,WC)
-
-                # append reflectance or radiance data                    
-                if reflectance_mode:                    
-                    data.append((sz,sa00,ze,az,be,RR,wwa,wwb))
-                else:
-                    data.append((sz,sa00,ze,az,be,SS,wwa,wwb))
-
-            result = lib.command_move(Z_id,int(Z_pos0.Position),Z_pos0.uPosition)    # at the end, move to starting position
-            result = lib.command_move(A_id,int(A_pos0.Position),A_pos0.uPosition)    # at the end, move to starting position
-            if Brot:
-                result = lib.command_move(B_id,int(B_pos0.Position),B_pos0.uPosition)    # at the end, move to starting position
-
-            with open(outfile+'.pickle', 'wb') as handle:
-                pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-        elif (go=='Q'): 
-            # Quit
-            break
-        
+        self.state_obj = AppState(workspace=self.workspace)
+        persistence = PersistenceService(self.workspace)
+        dry_run = os.environ.get("GONIO_DRY_RUN", "0") == "1"
+        self.dry_run = dry_run
+        if dry_run:
+            motors = MockMotorService()
+            spectrometer = MockSpectrometerService()
+            lcc = MockLCCService()
+            self.log_boot = "Running in DRY RUN mode."
         else:
-            print('Unrecognized command: ' + str(go))
+            from goniocontrol_app.services.lcc_service import LCCService
+            from goniocontrol_app.services.motor_service import MotorService
+            from goniocontrol_app.services.spectrometer_service import (
+                SpectrometerService,
+            )
 
-    except Exception as err:
-        print('Performing command "' + str(go) + '" failed with error:')
-        traceback.print_exc()
+            motors = MotorService()
+            spectrometer = SpectrometerService()
+            lcc = LCCService()
+            self.log_boot = "Running with real hardware services."
+        self.log_boot += " Runtime state dir: {}".format(persistence.state_dir)
+        self.workflow = WorkflowService(
+            self.state_obj, persistence, motors, spectrometer, lcc
+        )
+        self.controller = GuiController(self.workflow, self.log, self._set_busy)
+
+        self.busy_var = tk.StringVar(value="Idle")
+        self.spectrometer_status_var = tk.StringVar(value="Unknown")
+        self.motors_status_var = tk.StringVar(value="Unknown")
+        self.polarizer_status_var = tk.StringVar(value="Unknown")
+        self.save_format_var = tk.StringVar(
+            value="reflectance" if self.state_obj.reflectance_mode else "radiance"
+        )
+        default_outfile = str((self.workspace / "Test00.pickle").resolve())
+        self.outfile_var = tk.StringVar(value=default_outfile)
+        self.state_obj.outfile = default_outfile
+        self.angle_var = tk.StringVar(value=str(self.workspace / "Angles.txt"))
+        self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
+        self.repeats_var = tk.StringVar(value="1")
+        self.optimize_zenith_var = tk.StringVar(value="0")
+        self.white_ref_zenith_var = tk.StringVar(value="0")
+        self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
+        self.white_last_measured_var = tk.StringVar(value="Not collected yet!")
+        self.angles_status_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.angles_status_font.configure(slant="italic")
+        self.status_value_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.status_value_font.configure(weight="bold")
+        self.motor_labels = dict(self.MOTOR_ROLES)
+        self.motor_current_vars = {
+            role: tk.StringVar(value="N/A") for role, _ in self.MOTOR_ROLES
+        }
+        self.motor_target_vars = {
+            role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES
+        }
+        self.motor_drive_buttons = {}
+        self.motor_zero_buttons = {}
+        self._shutting_down = False
+
+        self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._shutdown)
+        self.after(200, self._startup_refresh)
+        self.after(500, self._refresh_motor_angles)
+        self.after(700, self._refresh_device_status)
+
+    def _build_ui(self):
+        root = ttk.Frame(self)
+        root.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        notebook = ttk.Notebook(root)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        status = ttk.Frame(notebook)
+        motors = ttk.Frame(notebook)
+        spectrometer = ttk.Frame(notebook)
+        setup = ttk.Frame(notebook)
+        plotting = ttk.Frame(notebook)
+        notebook.add(status, text="System Status")
+        notebook.add(motors, text="Motors")
+        notebook.add(spectrometer, text="Spectrometer")
+        notebook.add(setup, text="Measurement")
+        notebook.add(plotting, text="Plot/View")
+
+        self._build_status_panel(status)
+        self._build_motors_panel(motors)
+        self._build_spectrometer_panel(spectrometer)
+        self._build_setup_panel(setup)
+        self._build_plotting_panel(plotting)
+        self.log(self.log_boot)
+
+    def _build_status_panel(self, parent):
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        button_width = 22
+        italic_font = tkfont.nametofont("TkDefaultFont").copy()
+        italic_font.configure(slant="italic")
+        frm.columnconfigure(0, weight=1)
+
+        status_row = ttk.Frame(frm)
+        status_row.pack(fill=tk.X, pady=(2, 4))
+        ttk.Label(status_row, text="Status:").pack(side=tk.LEFT)
+        tk.Label(
+            status_row, textvariable=self.busy_var, font=self.status_value_font
+        ).pack(side=tk.LEFT, padx=6)
+        ttk.Label(status_row, text="Spectrometer:").pack(side=tk.LEFT, padx=(12, 4))
+        self.spectrometer_status_label = tk.Label(
+            status_row,
+            textvariable=self.spectrometer_status_var,
+            font=self.status_value_font,
+            fg="black",
+        )
+        self.spectrometer_status_label.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(status_row, text="Motors:").pack(side=tk.LEFT, padx=(4, 4))
+        self.motors_status_label = tk.Label(
+            status_row,
+            textvariable=self.motors_status_var,
+            font=self.status_value_font,
+            fg="black",
+        )
+        self.motors_status_label.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(status_row, text="Polarizer:").pack(side=tk.LEFT, padx=(4, 4))
+        self.polarizer_status_label = tk.Label(
+            status_row,
+            textvariable=self.polarizer_status_var,
+            font=self.status_value_font,
+            fg="black",
+        )
+        self.polarizer_status_label.pack(side=tk.LEFT, padx=(0, 2))
+
+        actions_frame = ttk.Frame(frm)
+        actions_frame.pack(fill=tk.X)
+        actions = (
+            (
+                "Restore Spectrometer",
+                self._restore,
+                "Reconnects to spectrometer communication.",
+            ),
+            (
+                "Load Runtime State",
+                self._load_runtime_state,
+                "Unnecessary button? Loads saved runtime settings into the GUI.",
+            ),
+            (
+                "Check configuration",
+                self._run_preflight,
+                "Unnecessary button? Runs startup checks for devices and readiness.",
+            ),
+        )
+        for text, command, description in actions:
+            row = ttk.Frame(actions_frame)
+            row.pack(fill=tk.X, padx=4, pady=2, anchor="w")
+            ttk.Button(row, text=text, command=command, width=button_width).pack(
+                side=tk.LEFT
+            )
+            ttk.Label(row, text=description, font=italic_font).pack(
+                side=tk.LEFT, padx=(8, 0)
+            )
+
+        log_frame = ttk.LabelFrame(frm, text="Terminal Output")
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=(8, 0))
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD)
+        log_scroll = ttk.Scrollbar(
+            log_frame, orient=tk.VERTICAL, command=self.log_text.yview
+        )
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(4, 0), pady=4)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 4), pady=4)
+
+    def _build_setup_panel(self, parent):
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+        output_frame = self._build_output_file_frame(frm)
+        output_frame.grid(
+            row=0, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10)
+        )
+
+        manual_frame = self._build_manual_measurement_frame(frm)
+        manual_frame.grid(
+            row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10)
+        )
+
+        sequence_frame = self._build_measurement_sequence_frame(frm)
+        sequence_frame.grid(
+            row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0)
+        )
+
+        frm.columnconfigure(1, weight=1)
+        sequence_frame.columnconfigure(1, weight=1)
+
+    def _build_spectrometer_panel(self, parent):
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        calibration_frame = self._build_measurement_calibration_frame(frm)
+        calibration_frame.pack(fill=tk.X, padx=2, pady=(0, 10))
+
+    def _build_output_file_frame(self, parent):
+        output_frame = ttk.LabelFrame(parent, text="Output file")
+        ttk.Entry(output_frame, textvariable=self.outfile_var, width=60).grid(
+            row=0, column=0, sticky="we", padx=6, pady=4
+        )
+        ttk.Button(output_frame, text="Browse", command=self._browse_output_file).grid(
+            row=0, column=1, padx=4, pady=4
+        )
+        format_row = ttk.Frame(output_frame)
+        format_row.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
+        ttk.Label(format_row, text="Save format:").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            format_row,
+            text="reflectance",
+            value="reflectance",
+            variable=self.save_format_var,
+            command=self._toggle_mode,
+        ).grid(row=0, column=1, padx=(10, 10))
+        ttk.Radiobutton(
+            format_row,
+            text="radiance",
+            value="radiance",
+            variable=self.save_format_var,
+            command=self._toggle_mode,
+        ).grid(row=0, column=2)
+        output_frame.columnconfigure(0, weight=1)
+        return output_frame
+
+    def _build_measurement_calibration_frame(self, parent):
+        calibration_frame = ttk.LabelFrame(parent, text="Spectrometer Config")
+        calibration_button_width = 16
+        ttk.Button(
+            calibration_frame,
+            text="Optimize",
+            command=self._optimize,
+            width=calibration_button_width,
+        ).grid(row=0, column=0, padx=4, pady=4, sticky="w")
+        ttk.Label(calibration_frame, text="Sensor Zen").grid(
+            row=0, column=1, sticky="w", padx=(12, 4)
+        )
+        ttk.Entry(
+            calibration_frame, textvariable=self.optimize_zenith_var, width=10
+        ).grid(row=0, column=2, sticky="w", padx=4)
+        ttk.Label(
+            calibration_frame,
+            text="Not optimized yet!",
+            font=self.angles_status_font,
+        ).grid(row=0, column=3, sticky="w", padx=(10, 4))
+
+        ttk.Button(
+            calibration_frame,
+            text="Dark Current",
+            command=self._dark,
+            width=calibration_button_width,
+        ).grid(row=1, column=0, padx=4, pady=4, sticky="w")
+        ttk.Label(
+            calibration_frame,
+            textvariable=self.dark_last_measured_var,
+            font=self.angles_status_font,
+        ).grid(row=1, column=3, sticky="w", padx=(10, 4))
+
+        ttk.Button(
+            calibration_frame,
+            text="White Reference",
+            command=self._white,
+            width=calibration_button_width,
+        ).grid(row=2, column=0, padx=4, pady=4, sticky="w")
+        ttk.Label(calibration_frame, text="Sensor Zen").grid(
+            row=2, column=1, sticky="w", padx=(12, 4)
+        )
+        ttk.Entry(
+            calibration_frame, textvariable=self.white_ref_zenith_var, width=10
+        ).grid(row=2, column=2, sticky="w", padx=4)
+        ttk.Label(
+            calibration_frame,
+            textvariable=self.white_last_measured_var,
+            font=self.angles_status_font,
+        ).grid(row=2, column=3, sticky="w", padx=(10, 4))
+
+        return calibration_frame
+
+    def _build_measurement_sequence_frame(self, parent):
+        sequence_frame = ttk.LabelFrame(parent, text="Measurement Sequence")
+        ttk.Label(sequence_frame, text="Angles file:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(
+            sequence_frame, textvariable=self.angle_var, width=60, state="readonly"
+        ).grid(row=0, column=1, sticky="we", padx=6)
+        ttk.Button(sequence_frame, text="Browse", command=self._browse_angle_file).grid(
+            row=0, column=2, padx=4
+        )
+        ttk.Label(
+            sequence_frame,
+            textvariable=self.angles_status_var,
+            font=self.angles_status_font,
+        ).grid(row=1, column=1, sticky="w", padx=6)
+        ttk.Button(sequence_frame, text="Show", command=self._show_angle_file).grid(
+            row=1, column=2, padx=4
+        )
+
+        ttk.Label(sequence_frame, text="Sequence repeats:").grid(
+            row=2, column=0, sticky="w", pady=(10, 0)
+        )
+        ttk.Entry(sequence_frame, textvariable=self.repeats_var, width=20).grid(
+            row=2, column=1, sticky="w", padx=4, pady=(10, 0)
+        )
+        style = ttk.Style()
+        style.configure("TallMeasure.TButton", padding=(8, 10))
+
+        button_row = ttk.Frame(sequence_frame)
+        button_row.grid(row=3, column=1, columnspan=2, pady=(10, 0))
+        button_width = 30
+        ttk.Button(
+            button_row,
+            text="Collect Measurement Sequence",
+            command=self._measure,
+            style="TallMeasure.TButton",
+            width=button_width,
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(
+            button_row,
+            text="Abort Measurement Sequence",
+            command=self.controller.cancel,
+            style="TallMeasure.TButton",
+            width=button_width,
+        ).grid(row=0, column=1)
+        return sequence_frame
+
+    def _build_manual_measurement_frame(self, parent):
+        manual_frame = ttk.LabelFrame(parent, text="Manual measurement")
+        style = ttk.Style()
+        style.configure("TallMeasure.TButton", padding=(8, 10))
+        manual_frame.columnconfigure(0, weight=1)
+        ttk.Button(
+            manual_frame,
+            text="Collect Single Spectrum",
+            command=self._measure_single_current_position,
+            style="TallMeasure.TButton",
+            width=40,
+        ).grid(row=0, column=0, padx=6, pady=6)
+        return manual_frame
+
+    def _build_motors_panel(self, parent):
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        frm.columnconfigure(0, weight=1)
+        goniometer_frame = ttk.LabelFrame(frm, text="Goniometer")
+        goniometer_frame.grid(row=0, column=0, sticky="we", padx=4, pady=4)
+        ttk.Label(goniometer_frame, text="Motor").grid(row=0, column=0, sticky="w")
+        ttk.Label(goniometer_frame, text="Current angle").grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(goniometer_frame, text="Target angle").grid(
+            row=0, column=2, sticky="w"
+        )
+        for row_idx, (role, label) in enumerate(self.MOTOR_ROLES, start=1):
+            ttk.Label(goniometer_frame, text="{}:".format(label)).grid(
+                row=row_idx, column=0, sticky="w"
+            )
+            ttk.Entry(
+                goniometer_frame,
+                textvariable=self.motor_current_vars[role],
+                width=6,
+                state="readonly",
+            ).grid(row=row_idx, column=1, sticky="w", padx=4)
+            target_controls = ttk.Frame(goniometer_frame)
+            target_controls.grid(row=row_idx, column=2, sticky="w", padx=4)
+            ttk.Button(
+                target_controls,
+                text="<<",
+                width=3,
+                command=lambda r=role: self._nudge_target(r, -1.0),
+            ).grid(row=0, column=0, padx=(0, 2))
+            ttk.Button(
+                target_controls,
+                text="<",
+                width=3,
+                command=lambda r=role: self._nudge_target(r, -0.1),
+            ).grid(row=0, column=1, padx=(0, 2))
+            ttk.Entry(
+                target_controls, textvariable=self.motor_target_vars[role], width=6
+            ).grid(row=0, column=2, padx=(0, 2))
+            ttk.Button(
+                target_controls,
+                text=">",
+                width=3,
+                command=lambda r=role: self._nudge_target(r, 0.1),
+            ).grid(row=0, column=3, padx=(0, 2))
+            ttk.Button(
+                target_controls,
+                text=">>",
+                width=3,
+                command=lambda r=role: self._nudge_target(r, 1.0),
+            ).grid(row=0, column=4)
+            drive_btn = ttk.Button(
+                goniometer_frame,
+                text="Drive",
+                command=lambda r=role: self._drive_motor(r),
+            )
+            drive_btn.grid(row=row_idx, column=3, padx=4, pady=2)
+            zero_btn = ttk.Button(
+                goniometer_frame,
+                text="Set Zero",
+                command=lambda r=role: self._set_motor_zero(r),
+            )
+            zero_btn.grid(row=row_idx, column=4, padx=4, pady=2)
+            self.motor_drive_buttons[role] = drive_btn
+            self.motor_zero_buttons[role] = zero_btn
+        polarizer_frame = ttk.LabelFrame(frm, text="Polarizer")
+        polarizer_frame.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        ttk.Button(
+            polarizer_frame,
+            text="Calibrate Polarizer",
+            command=self._calibrate_polarizer,
+        ).grid(row=0, column=0, padx=4, pady=4, sticky="w")
+
+    def _build_plotting_panel(self, parent):
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        ttk.Button(frm, text="View Snapshot", command=self._view).pack(
+            side=tk.LEFT, padx=4, pady=4
+        )
+        ttk.Button(frm, text="Plot Current Data", command=self._plot).pack(
+            side=tk.LEFT, padx=4, pady=4
+        )
+        ttk.Button(frm, text="VNIR Info", command=self._vnir_info).pack(
+            side=tk.LEFT, padx=4, pady=4
+        )
+
+    def _set_busy(self, busy):
+        self.after(0, lambda: self.busy_var.set("Busy" if busy else "Idle"))
+
+    def _startup_refresh(self):
+        self.controller.run_async(
+            "Startup initialization",
+            self._initialize_on_startup,
+            on_error=self._handle_startup_error,
+        )
+
+    def _initialize_on_startup(self):
+        self.workflow.connect_devices()
+        self.workflow.load_runtime_state()
+        self.after(0, self._sync_runtime_state_ui)
+        self.after(0, self._update_device_status_labels)
+        if self.state_obj.runtime_notice:
+            self.log(self.state_obj.runtime_notice)
+        result = self.workflow.startup_preflight()
+        self.log("Preflight: {}".format(result))
+
+    def _handle_startup_error(self, exc):
+        def show():
+            if self.dry_run:
+                title = "Startup failed in dry run mode"
+            else:
+                title = "Hardware startup failed"
+            messagebox.showerror(
+                title,
+                (
+                    "Automatic hardware initialization failed.\n\n"
+                    "{}\n\n".format(exc)
+                    + "Verify spectrometer connectivity and required motor controllers "
+                    "(zenith, azimuth, sample), then restart the application."
+                ),
+            )
+
+        self.after(0, show)
+
+    def _refresh_motor_angles(self):
+        if self.controller.is_busy():
+            self.after(500, self._refresh_motor_angles)
+            return
+        for role, _ in self.MOTOR_ROLES:
+            available = (
+                role in self.workflow.motors.handles
+                and role in self.state_obj.devices.positions_zero
+            )
+            state = "normal" if available else "disabled"
+            self.motor_drive_buttons[role].configure(state=state)
+            self.motor_zero_buttons[role].configure(state=state)
+            if not available:
+                self.motor_current_vars[role].set("N/A")
+                continue
+            try:
+                self.workflow.refresh_motor_position(role)
+                angle = self.workflow.get_motor_angle_from_zero(role)
+                self.motor_current_vars[role].set(self._format_angle(angle))
+            except Exception:
+                self.motor_current_vars[role].set("N/A")
+        self.after(500, self._refresh_motor_angles)
+
+    def log(self, msg):
+        def append():
+            self.log_text.insert(tk.END, msg + "\n")
+            self.log_text.see(tk.END)
+
+        self.after(0, append)
+
+    def _run_preflight(self):
+        self.state_obj.angles_file = Path(self.angle_var.get())
+        result = self.workflow.startup_preflight()
+        self.log("Status: {}".format(result))
+        self._update_device_status_labels()
+
+    def _load_runtime_state(self):
+        def run():
+            self.workflow.load_runtime_state()
+            self.after(0, self._sync_runtime_state_ui)
+            if self.state_obj.runtime_notice:
+                self.log(self.state_obj.runtime_notice)
+
+        self.controller.run_async("Load runtime state", run)
+
+    def _sync_runtime_state_ui(self):
+        self.outfile_var.set(self.state_obj.outfile)
+        angle_path = self.workflow.resolve_path(self.state_obj.angles_file)
+        self.angle_var.set(str(angle_path))
+        self.angles_status_var.set(
+            "Sequence with {} positions".format(len(self.state_obj.angles))
+        )
+        self.save_format_var.set(
+            "reflectance" if self.state_obj.reflectance_mode else "radiance"
+        )
+
+    def _browse_output_file(self):
+        current = Path(
+            self.outfile_var.get().strip() or (self.workspace / "Test00.pickle")
+        )
+        selected = filedialog.asksaveasfilename(
+            title="Select output file",
+            initialdir=str(
+                current.parent if current.parent.exists() else self.workspace
+            ),
+            initialfile=current.name,
+            defaultextension=".pickle",
+            filetypes=[("Pickle files", "*.pickle"), ("All files", "*.*")],
+        )
+        if not selected:
+            return
+        selected_path = Path(selected)
+        if selected_path.suffix.lower() != ".pickle":
+            selected_path = selected_path.with_suffix(".pickle")
+        outfile = str(selected_path.resolve())
+        self.outfile_var.set(outfile)
+        self.controller.run_async(
+            "New dataset", lambda: self.workflow.new_dataset(outfile)
+        )
+
+    def _browse_angle_file(self):
+        selected = filedialog.askopenfilename(
+            title="Select angle file",
+            initialdir=self.workspace,
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if selected:
+            self.angle_var.set(selected)
+            self._apply_angles()
+
+    def _apply_angles(self):
+        path = Path(self.angle_var.get())
+
+        def run():
+            self.state_obj.angles_file = path
+            self.state_obj.angles = self.workflow.persistence.read_angles(path)
+            loaded_positions = len(self.state_obj.angles)
+            self.after(
+                0,
+                lambda: self.angles_status_var.set(
+                    "Sequence with {} positions".format(loaded_positions)
+                ),
+            )
+            self.workflow.save_runtime_settings()
+            self.log(
+                "Loaded {} angle rows from {}".format(len(self.state_obj.angles), path)
+            )
+
+        self.controller.run_async("Load angles", run)
+
+    def _show_angle_file(self):
+        path = Path(self.angle_var.get())
+        if not path.exists():
+            messagebox.showerror(
+                "Angles file missing", "Angles file does not exist:\n{}".format(path)
+            )
+            return
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["notepad", str(path)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as exc:
+            messagebox.showerror(
+                "Open file failed", "Could not open angles file:\n{}".format(exc)
+            )
+
+    def _toggle_mode(self):
+        # Keep both GUI and backend mode aligned.
+        desired = self.save_format_var.get() == "reflectance"
+        if self.state_obj.reflectance_mode != desired:
+            self.workflow.toggle_mode()
+        self.log(
+            "Mode => {}".format(
+                "Reflectance" if self.state_obj.reflectance_mode else "Radiance"
+            )
+        )
+
+    def _restore(self):
+        def run():
+            self.workflow.restore_spectrometer()
+            self.after(0, self._update_device_status_labels)
+
+        self.controller.run_async("Restore spectrometer", run)
+
+    def _optimize(self):
+        za = float(self.optimize_zenith_var.get() or "0")
+        self.controller.run_async(
+            "Optimize", lambda: self.workflow.optimize(za, progress=self.log)
+        )
+
+    def _dark(self):
+        def run():
+            self.workflow.collect_dark()
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.after(
+                0,
+                lambda: self.dark_last_measured_var.set(
+                    "Last collection: {}".format(timestamp)
+                ),
+            )
+
+        self.controller.run_async("Collect dark", run)
+
+    def _white(self):
+        def run():
+            za = float(self.white_ref_zenith_var.get() or "0")
+            self.workflow.collect_white(za)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.after(
+                0,
+                lambda: self.white_last_measured_var.set(
+                    "Last collection: {}".format(timestamp)
+                ),
+            )
+
+        self.controller.run_async("Collect white", run)
+
+    def _ending_white(self):
+        za = float(self.white_ref_zenith_var.get() or "0")
+        self.controller.run_async(
+            "Collect ending white", lambda: self.workflow.collect_ending_white(za)
+        )
+
+    def _calibrate_polarizer(self):
+        za = float(self.white_ref_zenith_var.get() or "0")
+        self.controller.run_async(
+            "Calibrate polarizer",
+            lambda: self.workflow.calibrate_polarizer(za, progress=self.log),
+        )
+
+    def _format_angle(self, angle):
+        return "{:+.2f}°".format(angle)
+
+    def _nudge_target(self, role, delta):
+        raw = self.motor_target_vars[role].get().strip()
+        try:
+            current = float(raw) if raw else 0.0
+        except ValueError:
+            current = 0.0
+        self.motor_target_vars[role].set("{:.2f}".format(current + delta))
+
+    def _confirm_out_of_range(self, role, value):
+        minimum, maximum = self.MOTOR_LIMITS[role]
+        if minimum <= value <= maximum:
+            return True
+        return messagebox.askyesno(
+            "Target angle outside nominal range",
+            (
+                "{} target {:.2f}° is outside nominal range [{:.2f}, {:.2f}]°. Continue?".format(
+                    self.motor_labels[role], value, minimum, maximum
+                )
+            ),
+        )
+
+    def _drive_motor(self, role):
+        try:
+            target = float(self.motor_target_vars[role].get() or "0")
+        except ValueError:
+            messagebox.showerror(
+                "Invalid input",
+                "Enter a numeric target angle for {}.".format(self.motor_labels[role]),
+            )
+            return
+        if not self._confirm_out_of_range(role, target):
+            return
+        motor_name = self.motor_labels[role]
+        self.controller.run_async(
+            "Drive {} to {:.2f} deg".format(motor_name, target),
+            lambda: self.workflow.drive_motor_to_angle(role, target),
+        )
+
+    def _set_motor_zero(self, role):
+        motor_name = self.motor_labels[role]
+        self.controller.run_async(
+            "Set zero for {}".format(motor_name),
+            lambda: self.workflow.set_zero_at_current_position(role),
+        )
+
+    def _measure(self):
+        angle_path = Path(self.angle_var.get())
+        self.state_obj.angles_file = angle_path
+        if not self.state_obj.angles:
+            try:
+                self.state_obj.angles = self.workflow.persistence.read_angles(
+                    angle_path
+                )
+                loaded_positions = len(self.state_obj.angles)
+                self.angles_status_var.set(
+                    "Sequence with {} positions".format(loaded_positions)
+                )
+                self.log(
+                    "Loaded {} angle rows from {}".format(loaded_positions, angle_path)
+                )
+            except Exception as exc:
+                messagebox.showerror(
+                    "Angles file error", "Could not load angles file:\n{}".format(exc)
+                )
+                return
+        if len(self.state_obj.angles) == 0:
+            messagebox.showerror(
+                "Angles required",
+                "Measurement sequence requires at least one angle row.",
+            )
+            return
+        repeats = int(self.repeats_var.get() or "1")
+        self.controller.run_measure(repeats)
+
+    def _measure_single_current_position(self):
+        try:
+            sensor_pol = self.workflow.get_motor_angle_from_zero("sensor_polarizer")
+        except Exception:
+            sensor_pol = 0.0
+        try:
+            lamp_pol = self.workflow.get_motor_angle_from_zero("lamp_polarizer")
+        except Exception:
+            lamp_pol = 0.0
+        try:
+            zenith = self.workflow.get_motor_angle_from_zero("zenith")
+            azimuth = self.workflow.get_motor_angle_from_zero("azimuth")
+            sample = self.workflow.get_motor_angle_from_zero("sample")
+        except Exception as exc:
+            messagebox.showerror(
+                "Manual measurement unavailable",
+                "Could not read current motor angles:\n{}".format(exc),
+            )
+            return
+
+        angle_row = (sensor_pol, lamp_pol, zenith, azimuth, sample, 0.0, 1.0)
+        previous_angles = list(self.state_obj.angles)
+        self.log(
+            "Manual single-spectrum at current position: "
+            "sz={:.2f}, sa00={:.2f}, ze={:.2f}, az={:.2f}, sample={:.2f}".format(
+                sensor_pol, lamp_pol, zenith, azimuth, sample
+            )
+        )
+        self.state_obj.angles = [angle_row]
+
+        def run_manual_measure():
+            try:
+                self.workflow.measure_sequence(
+                    repeats=1,
+                    progress=self.log,
+                    should_cancel=self.controller._cancel_event.is_set,
+                )
+            finally:
+                self.state_obj.angles = previous_angles
+
+        self.controller.run_async("Manual single spectrum", run_manual_measure)
+
+    def _view(self):
+        self.controller.run_async("View snapshot", self.workflow.view_snapshot)
+
+    def _plot(self):
+        self.controller.run_async("Plot data", self.workflow.plot_current_data)
+
+    def _vnir_info(self):
+        self.controller.run_async(
+            "VNIR info", lambda: self.log(str(self.workflow.show_vnir_info()))
+        )
+
+    def _update_device_status_labels(self):
+        try:
+            snapshot = self.workflow.get_device_status_snapshot()
+        except Exception:
+            snapshot = {
+                "spectrometer": "Unknown",
+                "motors": "Unknown",
+                "polarizer": "Unknown",
+            }
+        self.spectrometer_status_var.set(snapshot["spectrometer"])
+        self.motors_status_var.set(snapshot["motors"])
+        self.polarizer_status_var.set(snapshot["polarizer"])
+        self.spectrometer_status_label.configure(
+            fg=(
+                "red"
+                if snapshot["spectrometer"].startswith("NOT CONNECTED")
+                else "black"
+            )
+        )
+        self.motors_status_label.configure(
+            fg="red" if snapshot["motors"].startswith("NOT CONNECTED") else "black"
+        )
+        self.polarizer_status_label.configure(fg="black")
+
+    def _refresh_device_status(self):
+        if self._shutting_down:
+            return
+        self._update_device_status_labels()
+        self.after(2000, self._refresh_device_status)
+
+    def _shutdown(self):
+        if self._shutting_down:
+            return
+        if messagebox.askyesno("Exit", "Shutdown devices and exit?"):
+            if self.controller.is_busy():
+                messagebox.showwarning(
+                    "Busy",
+                    "Wait for the current operation to finish, then try shutdown again.",
+                )
+                return
+            self._shutting_down = True
+            self.busy_var.set("Shutting down")
+            self.update_idletasks()
+            try:
+                self.workflow.shutdown()
+            except Exception as exc:
+                self._shutting_down = False
+                self.busy_var.set("Idle")
+                messagebox.showerror(
+                    "Shutdown failed", "Could not shutdown devices:\n{}".format(exc)
+                )
+                return
+            self._finalize_exit()
+
+    def _finalize_exit(self):
+        self.controller.shutdown_executor()
+        self.quit()
+        self.destroy()
 
 
-#%% GRACEFULL EXIT
-lib.close_device(byref(cast(Z_id, POINTER(c_int))))
-try:
-    lib.close_device(byref(cast(P_id, POINTER(c_int))))
-except:
-    pass
-lib.close_device(byref(cast(A_id, POINTER(c_int))))
-try:
-    lib.close_device(byref(cast(L_id, POINTER(c_int))))
-except:
-    pass    
-if Brot:
-    lib.close_device(byref(cast(B_id, POINTER(c_int))))
+def main():
+    app = GoniocontrolGUI()
+    app.mainloop()
 
-try:
-    np.savetxt(outfile+'_.txt',np.ravel(data))
-except:
-    print('savetxt did not work!')
-#jout=open(outfile+'.json','w')
-#json.dump(data,jout)
-#jout.close()
-out=open(outfile+'.txt','w')
-for d in data:
-    #for g in d:
-        out.write(str(d[:5]))
-        out.write(str(np.ravel(d[5]))+'\n')
-out.close()    
-#np.save(outfile+'.npy',data)
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,8 @@
 import json
 import pickle
+import shutil
 import sys
+from os import environ
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -10,8 +12,54 @@ from goniocontrol_app.state import AngleRow, AppState
 
 
 class PersistenceService:
-    def __init__(self, workspace):
-        self.workspace = workspace
+    def __init__(self, workspace, state_dir=None):
+        self.workspace = Path(workspace).resolve()
+        self.state_dir = self._resolve_state_dir(state_dir)
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_state_dir(self, explicit_state_dir):
+        if explicit_state_dir:
+            return Path(explicit_state_dir).expanduser().resolve()
+
+        override = environ.get("GONIO_STATE_DIR", "").strip()
+        if override:
+            return Path(override).expanduser().resolve()
+
+        if sys.platform.startswith("win"):
+            base = environ.get("LOCALAPPDATA", "").strip()
+            if base:
+                candidate = Path(base) / "goniocontrol"
+            else:
+                candidate = Path.home() / "AppData" / "Local" / "goniocontrol"
+        else:
+            xdg_state = environ.get("XDG_STATE_HOME", "").strip()
+            if xdg_state:
+                candidate = Path(xdg_state) / "goniocontrol"
+            else:
+                candidate = Path.home() / ".local" / "state" / "goniocontrol"
+
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            return candidate.resolve()
+        except Exception:
+            fallback = (self.workspace / ".goniocontrol_state").resolve()
+            fallback.mkdir(parents=True, exist_ok=True)
+            return fallback
+
+    def _state_path(self, filename):
+        return self.state_dir / filename
+
+    def _legacy_path(self, filename):
+        return self.workspace / filename
+
+    def _migrate_if_needed(self, src, dst):
+        if dst.exists() or not src.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copy2(src, dst)
+        except Exception:
+            pass
 
     def _resolve_outfile_path(self, outfile):
         raw = (outfile or "").strip() or "Test00"
@@ -39,7 +87,10 @@ class PersistenceService:
         return rows
 
     def load_optional_array(self, filename):
-        path = self.workspace / filename
+        path = self._state_path(filename)
+        legacy = self._legacy_path(filename)
+        if not path.exists() and legacy.exists():
+            self._migrate_if_needed(legacy, path)
         if path.exists():
             try:
                 return np.load(path, allow_pickle=True)
@@ -62,10 +113,13 @@ class PersistenceService:
         return True
 
     def save_array(self, filename, data):
-        np.save(self.workspace / filename, data)
+        np.save(self._state_path(filename), data)
 
     def load_outfile_name(self, default= "Test00"):
-        path = self.workspace / "outfile.txt"
+        path = self._state_path("outfile.txt")
+        legacy = self._legacy_path("outfile.txt")
+        if not path.exists() and legacy.exists():
+            self._migrate_if_needed(legacy, path)
         if not path.exists():
             return str(self._resolve_outfile_path(default))
         stored = path.read_text(encoding="utf-8").strip() or default
@@ -73,8 +127,8 @@ class PersistenceService:
 
     def save_outfile_name(self, outfile):
         normalized = str(self._resolve_outfile_path(outfile))
-        (self.workspace / "outfile.txt").write_text(normalized, encoding="utf-8")
-        np.save(self.workspace / "outfile.npy", normalized)
+        self._state_path("outfile.txt").write_text(normalized, encoding="utf-8")
+        np.save(self._state_path("outfile.npy"), normalized)
 
     def load_runtime_settings(self, defaults):
         settings = {
@@ -82,7 +136,10 @@ class PersistenceService:
             "angles_file": str(defaults.get("angles_file", "Angles.txt")),
             "reflectance_mode": bool(defaults.get("reflectance_mode", True)),
         }
-        path = self.workspace / "runtime_settings.json"
+        path = self._state_path("runtime_settings.json")
+        legacy = self._legacy_path("runtime_settings.json")
+        if not path.exists() and legacy.exists():
+            self._migrate_if_needed(legacy, path)
         if not path.exists():
             return settings
         try:
@@ -115,7 +172,7 @@ class PersistenceService:
             "angles_file": str((angles_file if angles_file.is_absolute() else self.workspace / angles_file).resolve()),
             "reflectance_mode": bool(reflectance_mode),
         }
-        path = self.workspace / "runtime_settings.json"
+        path = self._state_path("runtime_settings.json")
         path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
     def load_existing_dataset(self, outfile):

@@ -146,7 +146,7 @@ class WorkflowService:
 
         present_polarizers = [role for role in polarizer_roles if role in self.motors.handles]
         if not present_polarizers:
-            snapshot["polarizer"] = "Optional / Not present"
+            snapshot["polarizer"] = "Not present"
         else:
             polarizer_faults = []
             for role in present_polarizers:

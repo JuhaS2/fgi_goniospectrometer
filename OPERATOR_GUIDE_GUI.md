@@ -49,10 +49,20 @@ From the repository root (`C:\git\fgi_goniospectrometer`):
 
 ## Outputs and compatibility
 
-- Uses and updates compatible artifacts:
-  - `outfile.txt`, `outfile.npy`, `<outfile>.pickle`, `<outfile>.txt`
+- Runtime state location:
+  - Runtime/calibration artifacts are stored outside repo root in an OS-specific state folder.
+  - Override folder with environment variable `GONIO_STATE_DIR`.
+  - Linux/Raspberry Pi default: `$XDG_STATE_HOME/goniocontrol` or `~/.local/state/goniocontrol`.
+  - Windows default (dry run/dev): `%LOCALAPPDATA%\\goniocontrol`.
+  - Fallback if defaults are not writable: `<repo>/.goniocontrol_state`.
+- Runtime artifacts written to the state folder:
+  - `outfile.txt`, `outfile.npy`, `runtime_settings.json`
   - `DC.npy`, `DriftDC.npy`, `DC_remainder.npy`, `Oheader.npy`
-  - `AA*.npy`, `White*.npy`, `White*E.npy`
+  - `AA*.npy`, `White*.npy`, `White*E.npy`, `WRZA.npy`, `WRZAE.npy`
+- Measurement outputs stay at the user-selected output path:
+  - `<outfile>.pickle`, `<outfile>.txt`, `<outfile>_.txt`
+- Backward compatibility:
+  - On startup, if runtime files are missing from the new state folder, legacy repo-root files are used as fallback and copied to the state folder.
 
 ## Notes
 
