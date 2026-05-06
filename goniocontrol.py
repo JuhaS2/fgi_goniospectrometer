@@ -90,6 +90,7 @@ class GoniocontrolGUI(tk.Tk):
         self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
         self.repeats_var = tk.StringVar(value="1")
         self.sensor_zenith_var = tk.StringVar(value="0")
+        self.optimize_status_var = tk.StringVar(value="Not optimized yet!")
         self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.white_last_measured_var = tk.StringVar(value="Not collected yet!")
         self.angles_status_font = tkfont.nametofont("TkDefaultFont").copy()
@@ -331,7 +332,7 @@ class GoniocontrolGUI(tk.Tk):
         ).grid(row=0, column=0, padx=4, pady=4, sticky="w")
         ttk.Label(
             calibration_frame,
-            text="Not optimized yet!",
+            textvariable=self.optimize_status_var,
             font=self.angles_status_font,
         ).grid(row=1, column=0, sticky="w", padx=4, pady=(0, 4))
 
@@ -584,12 +585,26 @@ class GoniocontrolGUI(tk.Tk):
         self.outfile_var.set(self.state_obj.outfile)
         angle_path = self.workflow.resolve_path(self.state_obj.angles_file)
         self.angle_var.set(str(angle_path))
+        self.optimize_status_var.set(
+            self._format_optimize_status(self.state_obj.calibration.optimizer_header)
+        )
         self.angles_status_var.set(
             "Sequence with {} positions".format(len(self.state_obj.angles))
         )
         self.save_format_var.set(
             "reflectance" if self.state_obj.reflectance_mode else "radiance"
         )
+
+    def _format_optimize_status(self, header):
+        if header is None:
+            return "Not optimized yet!"
+        try:
+            itime = int(header[2])
+            gain = [int(header[3][0]), int(header[3][1])]
+            offset = [int(header[4][0]), int(header[4][1])]
+        except Exception:
+            return "Optimize parameters unavailable"
+        return "itime={} gain={} offset={}".format(itime, gain, offset)
 
     def _browse_output_file(self):
         current = Path(
@@ -684,8 +699,18 @@ class GoniocontrolGUI(tk.Tk):
 
     def _optimize(self):
         za = float(self.sensor_zenith_var.get() or "0")
+        def run():
+            self.workflow.optimize(za, progress=self.log)
+            self.after(
+                0,
+                lambda: self.optimize_status_var.set(
+                    self._format_optimize_status(
+                        self.state_obj.calibration.optimizer_header
+                    )
+                ),
+            )
         self.controller.run_async(
-            "Optimize", lambda: self.workflow.optimize(za, progress=self.log)
+            "Optimize", run
         )
 
     def _dark(self):
