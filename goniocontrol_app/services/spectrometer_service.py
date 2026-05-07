@@ -3,6 +3,8 @@ import threading
 import time
 from typing import Optional
 
+import numpy as np
+
 from ASDlib import Optimize, ReadASD, ReadASD1, Restore, SetOpt, VNIRinfo
 
 
@@ -211,6 +213,7 @@ class SpectrometerService:
                     "legacy ReadASD timed out; trying A,1,1 fallback",
                 )
                 try:
+                    self.reconnect()
                     result = ReadASD1(self._s(), 1)
                 except Exception as fallback_exc:
                     self._mark_dead_if_transport_error(fallback_exc)
@@ -237,6 +240,40 @@ class SpectrometerService:
             t0 = time.time()
             try:
                 result = ReadASD1(self._s(), repeats)
+            except socket.timeout as exc:
+                # Some firmware images do not answer ``A,1,N`` reliably.
+                # Reconnect before fallback because a timed-out acquisition
+                # often leaves the server-side session wedged.
+                self._trace(
+                    "read_average",
+                    "A,1,{} timed out; reconnecting and falling back to repeated A".format(
+                        repeats
+                    ),
+                )
+                try:
+                    self.reconnect()
+                    spectra = []
+                    header = None
+                    for _ in range(max(1, int(repeats))):
+                        header, spectrum = ReadASD(self._s())
+                        spectra.append(spectrum)
+                    if len(spectra) == 1:
+                        avg = spectra[0]
+                    else:
+                        avg = np.mean(np.stack(spectra, axis=0), axis=0)
+                    result = (header, avg)
+                except Exception as fallback_exc:
+                    self._mark_dead_if_transport_error(fallback_exc)
+                    self._trace(
+                        "read_average",
+                        "fallback FAILED repeats={} {}: {} elapsed={:.3f}s".format(
+                            repeats,
+                            type(fallback_exc).__name__,
+                            fallback_exc,
+                            time.time() - t0,
+                        ),
+                    )
+                    raise fallback_exc from exc
             except Exception as exc:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("read_average", "FAILED repeats={} {}: {} elapsed={:.3f}s".format(
