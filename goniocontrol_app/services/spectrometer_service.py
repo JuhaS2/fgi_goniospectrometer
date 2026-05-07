@@ -3,7 +3,7 @@ import threading
 import time
 from typing import Optional
 
-from ASDlib import Optimize, ReadASD1, Restore, SetOpt, VNIRinfo
+from ASDlib import Optimize, ReadASD, ReadASD1, Restore, SetOpt, VNIRinfo
 
 
 class SpectrometerService:
@@ -197,14 +197,31 @@ class SpectrometerService:
                 raise
 
     def read_single(self):
-        # Use the canonical "A,1,1" form via ReadASD1 instead of the bare
-        # ``b"A"`` that ASDlib.ReadASD sends. The ASD firmware does not respond
-        # to the bare command in our setup; the result is a recv timeout
-        # followed by a broken pipe on the next send.
+        # Prefer the canonical "A,1,1" form, but some ASD firmware builds only
+        # answer the legacy single-byte command ``b"A"``. If ``A,1,1`` times out,
+        # fall back once to legacy mode before marking the transport as dead.
         with self._locked("read_single"):
             t0 = time.time()
             try:
                 result = ReadASD1(self._s(), 1)
+            except socket.timeout as exc:
+                self._trace(
+                    "read_single",
+                    "A,1,1 timed out; trying legacy ReadASD fallback",
+                )
+                try:
+                    result = ReadASD(self._s())
+                except Exception as fallback_exc:
+                    self._mark_dead_if_transport_error(fallback_exc)
+                    self._trace(
+                        "read_single",
+                        "fallback FAILED {}: {} elapsed={:.3f}s".format(
+                            type(fallback_exc).__name__,
+                            fallback_exc,
+                            time.time() - t0,
+                        ),
+                    )
+                    raise fallback_exc from exc
             except Exception as exc:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("read_single", "FAILED {}: {} elapsed={:.3f}s".format(
