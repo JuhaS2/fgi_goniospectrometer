@@ -197,20 +197,21 @@ class SpectrometerService:
                 raise
 
     def read_single(self):
-        # Prefer the canonical "A,1,1" form, but some ASD firmware builds only
-        # answer the legacy single-byte command ``b"A"``. If ``A,1,1`` times out,
-        # fall back once to legacy mode before marking the transport as dead.
+        # Prefer legacy single-shot ``b"A"`` first because this project's
+        # long-lived acquisition paths historically used it successfully.
+        # Some firmware variants support only one of ``A`` / ``A,1,1``.
+        # We therefore try both forms before declaring the link dead.
         with self._locked("read_single"):
             t0 = time.time()
             try:
-                result = ReadASD1(self._s(), 1)
+                result = ReadASD(self._s())
             except socket.timeout as exc:
                 self._trace(
                     "read_single",
-                    "A,1,1 timed out; trying legacy ReadASD fallback",
+                    "legacy ReadASD timed out; trying A,1,1 fallback",
                 )
                 try:
-                    result = ReadASD(self._s())
+                    result = ReadASD1(self._s(), 1)
                 except Exception as fallback_exc:
                     self._mark_dead_if_transport_error(fallback_exc)
                     self._trace(
