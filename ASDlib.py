@@ -32,60 +32,96 @@ Vwl2 = 1000
 wls = np.array(Vwl1 + np.arange(Nwl))
 
 
-def recvall(s, N):
+def recvall(s, N, label=""):
+    """Read exactly N bytes from socket, with progress trace and EOF detection.
+
+    The previous implementation could spin forever if the peer closed the
+    connection mid-stream because ``s.recv`` returns ``b""`` on EOF and the
+    loop never advanced. We now raise ``ConnectionError`` so the caller sees
+    a real failure instead of a hang.
+    """
+    print("DEBUG: recvall start label={!r} need={} timeout={}".format(
+        label, N, s.gettimeout()))
+    t0 = time.time()
     ln = 0
     data = []
+    chunks = 0
     while ln < N:
-        # print(ln,N)
-        d = s.recv(N - ln)
-        # print(d)
+        try:
+            d = s.recv(N - ln)
+        except Exception as exc:
+            print("DEBUG: recvall recv error label={!r} after={} of {} elapsed={:.3f}s {}: {}".format(
+                label, ln, N, time.time() - t0, type(exc).__name__, exc))
+            raise
+        chunks += 1
+        if not d:
+            print("DEBUG: recvall EOF label={!r} after={} of {} chunks={} elapsed={:.3f}s".format(
+                label, ln, N, chunks, time.time() - t0))
+            raise ConnectionError(
+                "Spectrometer closed the connection after {} of {} bytes ({})".format(
+                    ln, N, label or "recvall"
+                )
+            )
         data.append(d)
         ln += len(d)
+    print("DEBUG: recvall done label={!r} total={} chunks={} elapsed={:.3f}s".format(
+        label, ln, chunks, time.time() - t0))
     return b"".join(data)
 
 
 def Optimize(s):
+    print("DEBUG: Optimize -> send b'OPT,7'")
+    t0 = time.time()
     s.sendall(b"OPT,7")
     data = s.recv(32)
+    print("DEBUG: Optimize recv1 len={} timeout={}".format(len(data), s.gettimeout()))
     if len(data) < 28:
-        data += s.recv(32)
-        print(len(data))
+        more = s.recv(32)
+        print("DEBUG: Optimize recv2 len={} (total {})".format(len(more), len(data) + len(more)))
+        data += more
     header, errbyte, itime, gain1, gain2, offset1, offset2 = unpack(
         ">iiiiiii", data[:28]
     )
+    extra = len(data) - 28
+    print("DEBUG: Optimize header={} err={} itime={} gain=[{},{}] offset=[{},{}] leftover_bytes={} elapsed={:.3f}s".format(
+        header, errbyte, itime, gain1, gain2, offset1, offset2, extra, time.time() - t0))
     if header != 100:
         print("PROBLEMS IN OPTIMISATION")
         print(header, errbyte, itime, gain1, gain2, offset1, offset2)
     offset = [offset1, offset2]
     gain = [gain1, gain2]
     if itime > 5:  ### this may be suspicious, maybe not receiving well????
+        print("DEBUG: Optimize itime>5 capping to 5")
         print("WARNING: maybe too low signal!")
         itime = 5
         com = ("IC,2,0," + str(itime)).encode("ASCII")
-        print(com)
+        print("DEBUG: Optimize cap-send {!r}".format(com))
         s.sendall(com)
-        data = recvall(s, 20)
+        data = recvall(s, 20, label="Optimize.cap-IC")
+        print("DEBUG: Optimize cap-recv len={}".format(len(data)))
     return header, errbyte, itime, gain, offset
 
 
 def SetOpt(s, itime, gain, offset):
-    #    print(itime,gain,offset)
-    com = ("IC,2,0," + str(itime)).encode("ASCII")
-    #    print(com)
-    s.sendall(com)
-    dummydata = s.recv(20)
-    com = ("IC,1,2," + str(offset[1])).encode("ASCII")
-    s.sendall(com)
-    dummydata = s.recv(20)
-    com = ("IC,0,2," + str(offset[0])).encode("ASCII")
-    s.sendall(com)
-    dummydata = s.recv(20)
-    com = ("IC,1,1," + str(gain[1])).encode("ASCII")
-    s.sendall(com)
-    dummydata = s.recv(20)
-    com = ("IC,0,1," + str(gain[0])).encode("ASCII")
-    s.sendall(com)
-    dummydata = s.recv(20)
+    print("DEBUG: SetOpt itime={} gain={} offset={}".format(itime, gain, offset))
+    t0 = time.time()
+    for label, com in (
+        ("itime", ("IC,2,0," + str(itime)).encode("ASCII")),
+        ("offset[1]", ("IC,1,2," + str(offset[1])).encode("ASCII")),
+        ("offset[0]", ("IC,0,2," + str(offset[0])).encode("ASCII")),
+        ("gain[1]", ("IC,1,1," + str(gain[1])).encode("ASCII")),
+        ("gain[0]", ("IC,0,1," + str(gain[0])).encode("ASCII")),
+    ):
+        print("DEBUG: SetOpt send {} {!r}".format(label, com))
+        s.sendall(com)
+        try:
+            dummydata = s.recv(20)
+        except Exception as exc:
+            print("DEBUG: SetOpt {} recv error {}: {}".format(label, type(exc).__name__, exc))
+            raise
+        print("DEBUG: SetOpt {} recv len={} bytes={!r}".format(
+            label, len(dummydata), dummydata[:32]))
+    print("DEBUG: SetOpt done elapsed={:.3f}s".format(time.time() - t0))
 
 
 def DarkCurrent(s, itime):
@@ -121,24 +157,29 @@ def Version(s):
 
 def VNIRinfo(s):
     print("Querying VNIR info from spectrometer...")
+    print("DEBUG: VNIRinfo send b'INIT,0,VStartingWavelength'")
     s.sendall(b"INIT,0,VStartingWavelength")
-    data = recvall(s, 50)
+    data = recvall(s, 50, label="VNIRinfo.start_wl")
     name = str(30)
     header, errbyte, name, Vwl1, count = unpack(">ii30sdi", data[:50])
-    # print(header, errbyte, name, Vwl1, count)
+    print("DEBUG: VNIRinfo start_wl header={} err={} Vwl1={} count={}".format(
+        header, errbyte, Vwl1, count))
 
+    print("DEBUG: VNIRinfo send b'INIT,0,VDarkCurrentCorrection'")
     s.sendall(b"INIT,0,VDarkCurrentCorrection")
-    data = recvall(s, 50)  # s.recv(64)
+    data = recvall(s, 50, label="VNIRinfo.vdcc")
     name = str(30)
     header, errbyte, name, VDCC, count = unpack(">ii30sdi", data[:50])
+    print("DEBUG: VNIRinfo vdcc header={} err={} VDCC={} count={}".format(
+        header, errbyte, VDCC, count))
 
-    # print(header, errbyte, name, "VDCC:", VDCC, count)
-
+    print("DEBUG: VNIRinfo send b'INIT,0,VEndingWavelength'")
     s.sendall(b"INIT,0,VEndingWavelength")
-    data = recvall(s, 50)  # s.recv(64)
+    data = recvall(s, 50, label="VNIRinfo.end_wl")
     name = str(30)
     header, errbyte, name, Vwl2, count = unpack(">ii30sdi", data[:50])
-    # print(header, errbyte, name, Vwl2, count)
+    print("DEBUG: VNIRinfo end_wl header={} err={} Vwl2={} count={}".format(
+        header, errbyte, Vwl2, count))
     print(Vwl1, Vwl2, VDCC)
     return Vwl1, Vwl2, VDCC
 
@@ -160,45 +201,54 @@ def ReadASD1(s, count):
     t0 = time.time()
 
     com = ("A,1," + str(count)).encode("ASCII")
-    # print(com)
+    expected = Nwl * 4 + 256
+    print("DEBUG: ReadASD1 send {!r} expecting {} bytes timeout={}".format(
+        com, expected, s.gettimeout()))
     s.sendall(com)
     l0 = 0
     datd = []
-    #    time.sleep(0.1) # here could do something useful
-    # print('S1:',time.process_time(),time.time()-t0,count)
-    #   t0=time.time()
-    while l0 < Nwl * 4 + 256:
-        data = s.recv(Nwl * 4 + 256 - l0)
-        #        print('Sw1:',l0,time.process_time(),time.time()-t0)
-        # t0=time.time()
+    chunks = 0
+    first_byte_at = None
+    while l0 < expected:
+        try:
+            data = s.recv(expected - l0)
+        except Exception as exc:
+            print("DEBUG: ReadASD1 recv error after {} of {} bytes elapsed={:.3f}s {}: {}".format(
+                l0, expected, time.time() - t0, type(exc).__name__, exc))
+            raise
+        chunks += 1
         ln = len(data)
+        if ln == 0:
+            print("DEBUG: ReadASD1 EOF after {} of {} bytes chunks={} elapsed={:.3f}s".format(
+                l0, expected, chunks, time.time() - t0))
+            raise ConnectionError(
+                "Spectrometer closed during ReadASD1 ({} of {} bytes)".format(
+                    l0, expected
+                )
+            )
+        if first_byte_at is None:
+            first_byte_at = time.time() - t0
         datd.append(data)
         l0 += ln
-    #        print('Sw2:',l0,ln,time.process_time(),time.time()-t0)
-    #        t0=time.time()
-    #    print('S2:',time.process_time(),time.time()-t0)
-    #    t0=time.time()
     datc = b"".join(datd)
     header = unpack(">64i", datc[:256])
     spectrum = np.array(unpack(">2151f", datc[256 : 256 + 8604]))
-    # print('S3:',time.process_time(),time.time()-t0,l0,ln)
-    #    t0=time.time()
+    print("DEBUG: ReadASD1 done bytes={} chunks={} first_byte_at={:.3f}s elapsed={:.3f}s header[0]={} drift(header[22])={} sample[0]={:.1f} sample[-1]={:.1f}".format(
+        l0, chunks, first_byte_at if first_byte_at is not None else -1.0,
+        time.time() - t0, header[0], header[22],
+        float(spectrum[0]), float(spectrum[-1])))
     return header, spectrum
 
 
 def ReadASD(s):
+    print("DEBUG: ReadASD send b'A' (legacy single-shot)")
+    t0 = time.time()
     s.sendall(b"A")
-    datc = recvall(s, Nwl * 4 + 256)
-    #    l0=0
-    #    datd=[]
-    #    while (l0<Nwl*4+256):
-    #        data = s.recv(Nwl*4+256-l0)
-    #        ln=len(data)
-    #        datd.append(data)
-    #        l0+=ln
-    #    datc=b''.join(datd)
+    datc = recvall(s, Nwl * 4 + 256, label="ReadASD")
     header = unpack(">64i", datc[:256])
     spectrum = np.array(unpack(">2151f", datc[256 : 256 + 8604]))
+    print("DEBUG: ReadASD done elapsed={:.3f}s header[0]={} drift={}".format(
+        time.time() - t0, header[0], header[22]))
     return header, spectrum
 
 
@@ -229,17 +279,28 @@ def NOTReadASD0(s, count):
 
 
 def Restore(s):
-    print("R")
+    print("DEBUG: Restore send b'RESTORE,1' expecting >=7616 bytes timeout={}".format(s.gettimeout()))
+    t0 = time.time()
     s.sendall(b"RESTORE,1")
     nb = 0
-
+    chunks = 0
     for i in range(333):
-        #        print(i,nb)
-        data = s.recv(1024)
+        try:
+            data = s.recv(1024)
+        except Exception as exc:
+            print("DEBUG: Restore recv error after {} bytes chunks={} elapsed={:.3f}s {}: {}".format(
+                nb, chunks, time.time() - t0, type(exc).__name__, exc))
+            raise
+        if not data:
+            print("DEBUG: Restore EOF after {} bytes chunks={} elapsed={:.3f}s".format(
+                nb, chunks, time.time() - t0))
+            raise ConnectionError("Spectrometer closed during Restore")
+        chunks += 1
         nb += len(data)
         if nb >= 7616:
             break
-    print("RR.")
+    print("DEBUG: Restore done bytes={} chunks={} elapsed={:.3f}s".format(
+        nb, chunks, time.time() - t0))
 
 
 class datastruct:

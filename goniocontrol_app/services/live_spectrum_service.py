@@ -74,12 +74,16 @@ class LiveSpectrumService:
             self._latest_seq += 1
 
     def _run_idle_poll_loop(self):
+        print("DEBUG: LiveSpectrumService loop starting")
+        poll_id = 0
         while not self._stop_event.is_set():
             if not self.should_idle_poll():
                 self._stop_event.wait(0.05)
                 continue
 
+            poll_id += 1
             t0 = time.perf_counter()
+            print("DEBUG: LiveSpectrumService poll #{} starting".format(poll_id))
             try:
                 header, spectrum = self.spectrometer.read_single()
                 elapsed_s = max(0.001, time.perf_counter() - t0)
@@ -89,11 +93,20 @@ class LiveSpectrumService:
                     self.max_interval_s,
                     max(self.min_interval_s, tuned),
                 )
+                print("DEBUG: LiveSpectrumService poll #{} ok elapsed={:.3f}s next={:.3f}s".format(
+                    poll_id, elapsed_s, self._next_interval_s))
                 self._on_poll_success()
             except Exception as exc:
+                elapsed_s = time.perf_counter() - t0
+                print("DEBUG: LiveSpectrumService poll #{} FAILED elapsed={:.3f}s {}: {}".format(
+                    poll_id, elapsed_s, type(exc).__name__, exc))
                 self._on_poll_failure(exc)
+                print("DEBUG: LiveSpectrumService poll #{} next={:.3f}s streak={} backoff={:.3f}s".format(
+                    poll_id, self._next_interval_s, self._error_streak,
+                    self._error_backoff_s))
 
             self._stop_event.wait(self._next_interval_s)
+        print("DEBUG: LiveSpectrumService loop exiting")
 
     def _on_poll_success(self):
         if self._error_streak > 0 and self.emit_log:
