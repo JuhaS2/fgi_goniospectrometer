@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -68,6 +69,7 @@ class GoniocontrolGUI(tk.Tk):
             self.state_obj, persistence, motors, spectrometer, lcc
         )
         self.controller = GuiController(self.workflow, self.log, self._set_busy)
+        self._shutting_down = False
         self.live_spectrum_service = LiveSpectrumService(
             spectrometer=spectrometer,
             emit_log=self.log,
@@ -75,6 +77,15 @@ class GoniocontrolGUI(tk.Tk):
             and not self._shutting_down,
         )
         self.workflow.on_spectrum = self.live_spectrum_service.on_spectrum
+        # Dedicated single-thread executor for periodic spectrometer health
+        # probes. Kept separate from the GuiController worker so a long-running
+        # measurement does not block the status indicator, and so a stuck probe
+        # cannot starve user-driven operations.
+        self._status_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="StatusProbe"
+        )
+        self._spectrometer_status_cache = "Unknown"
+        self._spectrometer_probe_in_flight = False
 
         self.busy_var = tk.StringVar(value="Idle")
         self.spectrometer_status_var = tk.StringVar(value="Unknown")
@@ -106,7 +117,6 @@ class GoniocontrolGUI(tk.Tk):
         }
         self.motor_drive_buttons = {}
         self.motor_zero_buttons = {}
-        self._shutting_down = False
         self.live_source_var = tk.StringVar(value="none")
         self.live_timestamp_var = tk.StringVar(value="n/a")
         self._live_last_seq = -1
@@ -511,6 +521,8 @@ class GoniocontrolGUI(tk.Tk):
         self.workflow.connect_devices()
         self.workflow.load_runtime_state()
         self.live_spectrum_service.start()
+        if self.state_obj.devices.connected_spectrometer:
+            self._spectrometer_status_cache = "Connected"
         self.after(0, self._sync_runtime_state_ui)
         self.after(0, self._update_device_status_labels)
         if self.state_obj.runtime_notice:
@@ -901,22 +913,15 @@ class GoniocontrolGUI(tk.Tk):
 
     def _update_device_status_labels(self):
         try:
-            snapshot = self.workflow.get_device_status_snapshot()
+            snapshot = self.workflow.get_motor_status_snapshot()
         except Exception:
-            snapshot = {
-                "spectrometer": "Unknown",
-                "motors": "Unknown",
-                "polarizer": "Unknown",
-            }
-        self.spectrometer_status_var.set(snapshot["spectrometer"])
+            snapshot = {"motors": "Unknown", "polarizer": "Unknown"}
+        spectrometer_status = self._spectrometer_status_cache
+        self.spectrometer_status_var.set(spectrometer_status)
         self.motors_status_var.set(snapshot["motors"])
         self.polarizer_status_var.set(snapshot["polarizer"])
         self.spectrometer_status_label.configure(
-            fg=(
-                "red"
-                if snapshot["spectrometer"].startswith("NOT CONNECTED")
-                else "black"
-            )
+            fg=("red" if spectrometer_status.startswith("NOT CONNECTED") else "black")
         )
         self.motors_status_label.configure(
             fg="red" if snapshot["motors"].startswith("NOT CONNECTED") else "black"
@@ -927,7 +932,42 @@ class GoniocontrolGUI(tk.Tk):
         if self._shutting_down:
             return
         self._update_device_status_labels()
+        self._submit_spectrometer_probe()
         self.after(2000, self._refresh_device_status)
+
+    def _submit_spectrometer_probe(self):
+        if self._shutting_down or self._spectrometer_probe_in_flight:
+            return
+        if not self.state_obj.devices.connected_spectrometer:
+            # Reflect the cached "not connected" state without attempting I/O;
+            # connection is established by the startup task on the GuiController
+            # worker, which will refresh the cache when it finishes.
+            if self._spectrometer_status_cache != "NOT CONNECTED":
+                self._spectrometer_status_cache = "NOT CONNECTED"
+                self.after(0, self._update_device_status_labels)
+            return
+        self._spectrometer_probe_in_flight = True
+        try:
+            self._status_executor.submit(self._run_spectrometer_probe)
+        except RuntimeError:
+            # Executor was shut down between the check and submit (e.g. during
+            # teardown); leave the cache as-is.
+            self._spectrometer_probe_in_flight = False
+
+    def _run_spectrometer_probe(self):
+        try:
+            status = self.workflow.probe_spectrometer_connected()
+        except Exception:
+            status = "NOT CONNECTED"
+        self.after(0, self._apply_spectrometer_probe_result, status)
+
+    def _apply_spectrometer_probe_result(self, status):
+        self._spectrometer_probe_in_flight = False
+        if self._shutting_down:
+            return
+        if status != self._spectrometer_status_cache:
+            self._spectrometer_status_cache = status
+            self._update_device_status_labels()
 
     def _refresh_live_plot(self):
         if self._shutting_down:
@@ -970,6 +1010,7 @@ class GoniocontrolGUI(tk.Tk):
             self.update_idletasks()
             try:
                 self.live_spectrum_service.stop()
+                self._shutdown_status_executor()
                 self.workflow.shutdown()
             except Exception as exc:
                 self._shutting_down = False
@@ -982,8 +1023,19 @@ class GoniocontrolGUI(tk.Tk):
 
     def _finalize_exit(self):
         self.controller.shutdown_executor()
+        self._shutdown_status_executor()
         self.quit()
         self.destroy()
+
+    def _shutdown_status_executor(self):
+        executor = getattr(self, "_status_executor", None)
+        if executor is None:
+            return
+        try:
+            executor.shutdown(wait=True, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=True)
+        self._status_executor = None
 
 
 def main():

@@ -120,6 +120,7 @@ def Version(s):
 
 
 def VNIRinfo(s):
+    print("Querying VNIR info from spectrometer...")
     s.sendall(b"INIT,0,VStartingWavelength")
     data = recvall(s, 50)
     name = str(30)
