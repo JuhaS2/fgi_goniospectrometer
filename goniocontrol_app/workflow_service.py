@@ -309,6 +309,64 @@ class WorkflowService:
             "Oheader.npy", self.state.calibration.optimizer_header
         )
 
+    def auto_optimize_on_startup(self, progress=None):
+        """Run an OPT,7 cycle right after the socket is up.
+
+        The ASD needs to be optimized at least once per session before it
+        responds to acquisition commands. Without it, the very first
+        ``A,1,1`` blocks until the recv timeout and the connection then
+        drops with a broken pipe, taking subsequent commands with it.
+
+        Errors are caught and logged via ``progress`` so a misbehaving link
+        cannot prevent the GUI from coming up. Returns the optimizer header
+        on success, otherwise ``None``.
+        """
+        last_header = None
+        success = False
+        for idx in range(25):
+            try:
+                header = self.spectrometer.optimize()
+            except Exception as exc:
+                if progress:
+                    progress(
+                        "Startup optimize attempt {} failed: {}: {}".format(
+                            idx + 1, type(exc).__name__, exc
+                        )
+                    )
+                return None
+            last_header = header
+            if progress:
+                progress(
+                    "Startup optimize {}/25 => header {}".format(idx + 1, header[0])
+                )
+            if header[0] == 100:
+                success = True
+                break
+
+        if success and last_header is not None:
+            self.state.calibration.optimizer_header = np.array(
+                last_header, dtype=object
+            )
+            try:
+                self.persistence.save_array(
+                    "Oheader.npy", self.state.calibration.optimizer_header
+                )
+            except Exception as exc:
+                if progress:
+                    progress(
+                        "Startup optimize: could not persist Oheader.npy ({}: {}).".format(
+                            type(exc).__name__, exc
+                        )
+                    )
+            return last_header
+
+        if progress:
+            progress(
+                "Startup optimize did not converge after 25 attempts; "
+                "spectrometer may not respond to acquisition commands."
+            )
+        return None
+
     def collect_dark(self):
         header, dc = self.spectrometer.read_average(25)
         drift = header[22]

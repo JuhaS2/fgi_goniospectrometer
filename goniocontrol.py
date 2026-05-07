@@ -519,12 +519,39 @@ class GoniocontrolGUI(tk.Tk):
 
     def _initialize_on_startup(self):
         self.workflow.connect_devices()
+        # ``load_runtime_state`` reads VNIR metadata and applies any cached
+        # SetOpt values; that runs fine on a fresh socket.
         self.workflow.load_runtime_state()
+        # Put the spectrometer into a measurement-ready state before any read
+        # (live poll, status probe, or workflow step) touches the socket.
+        # Without this, the first ``A,1,1`` would block until the recv timeout
+        # and leave the connection broken. Done after load_runtime_state so a
+        # successful fresh optimize replaces stale cached SetOpt values.
+        startup_header = None
+        if self.state_obj.devices.connected_spectrometer:
+            startup_header = self.workflow.auto_optimize_on_startup(
+                progress=self.log
+            )
+            if startup_header is None:
+                self.log(
+                    "Spectrometer did not optimize at startup. Live preview "
+                    "and acquisition commands may fail until you reconnect "
+                    "and run Optimize manually."
+                )
         self.live_spectrum_service.start()
         if self.state_obj.devices.connected_spectrometer:
             self._spectrometer_status_cache = "Connected"
         self.after(0, self._sync_runtime_state_ui)
         self.after(0, self._update_device_status_labels)
+        if startup_header is not None:
+            self.after(
+                0,
+                lambda: self.optimize_status_var.set(
+                    self._format_optimize_status(
+                        self.state_obj.calibration.optimizer_header
+                    )
+                ),
+            )
         if self.state_obj.runtime_notice:
             self.log(self.state_obj.runtime_notice)
         result = self.workflow.startup_preflight()
