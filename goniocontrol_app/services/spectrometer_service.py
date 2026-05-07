@@ -199,45 +199,60 @@ class SpectrometerService:
                 raise
 
     def read_single(self):
-        # Prefer legacy single-shot ``b"A"`` first because this project's
-        # long-lived acquisition paths historically used it successfully.
-        # Some firmware variants support only one of ``A`` / ``A,1,1``.
-        # We therefore try both forms before declaring the link dead.
+        # Match the old no-polarizer CLI path: TakeI(s) -> ReadASD1(s, 1).
+        # Retry once on a fresh socket, then fall back to legacy ``b"A"``.
         with self._locked("read_single"):
             t0 = time.time()
-            try:
-                result = ReadASD(self._s())
-            except socket.timeout as exc:
-                self._trace(
-                    "read_single",
-                    "legacy ReadASD timed out; reconnecting and retrying ReadASD",
-                )
-                try:
-                    self.reconnect()
-                    result = ReadASD(self._s())
-                except socket.timeout:
+            attempts = (
+                ("A,1,1", lambda: ReadASD1(self._s(), 1)),
+                ("A,1,1 retry", lambda: ReadASD1(self._s(), 1)),
+                ("legacy A", lambda: ReadASD(self._s())),
+            )
+            last_exc = None
+            for idx, (label, reader) in enumerate(attempts):
+                if idx > 0:
                     self._trace(
                         "read_single",
-                        "ReadASD retry timed out; reconnecting and trying A,1,1 fallback",
+                        "{} after reconnect".format(label),
                     )
                     self.reconnect()
-                    result = ReadASD1(self._s(), 1)
-                except Exception as fallback_exc:
-                    self._mark_dead_if_transport_error(fallback_exc)
+                try:
+                    result = reader()
+                    break
+                except socket.timeout as exc:
+                    last_exc = exc
                     self._trace(
                         "read_single",
-                        "fallback FAILED {}: {} elapsed={:.3f}s".format(
-                            type(fallback_exc).__name__,
-                            fallback_exc,
+                        "{} timed out after {:.3f}s".format(
+                            label, time.time() - t0
+                        ),
+                    )
+                    continue
+                except Exception as exc:
+                    self._mark_dead_if_transport_error(exc)
+                    self._trace(
+                        "read_single",
+                        "{} FAILED {}: {} elapsed={:.3f}s".format(
+                            label,
+                            type(exc).__name__,
+                            exc,
                             time.time() - t0,
                         ),
                     )
-                    raise fallback_exc from exc
-            except Exception as exc:
-                self._mark_dead_if_transport_error(exc)
-                self._trace("read_single", "FAILED {}: {} elapsed={:.3f}s".format(
-                    type(exc).__name__, exc, time.time() - t0))
-                raise
+                    raise
+            else:
+                if last_exc is None:
+                    last_exc = TimeoutError("all read_single attempts failed")
+                self._mark_dead_if_transport_error(last_exc)
+                self._trace(
+                    "read_single",
+                    "FAILED after all attempts {}: {} elapsed={:.3f}s".format(
+                        type(last_exc).__name__,
+                        last_exc,
+                        time.time() - t0,
+                    ),
+                )
+                raise last_exc
             self._trace("read_single", "ok header[0]={} elapsed={:.3f}s".format(
                 result[0][0], time.time() - t0))
             return result
@@ -245,56 +260,71 @@ class SpectrometerService:
     def read_average(self, repeats):
         with self._locked("read_average({})".format(repeats)):
             t0 = time.time()
-            try:
-                result = ReadASD1(self._s(), repeats)
-            except socket.timeout as exc:
-                # Some firmware images do not answer ``A,1,N`` reliably.
-                # Reconnect before fallback because a timed-out acquisition
-                # often leaves the server-side session wedged.
-                self._trace(
-                    "read_average",
-                    "A,1,{} timed out; reconnecting and retrying A,1,N".format(
-                        repeats
-                    ),
-                )
-                try:
-                    self.reconnect()
-                    result = ReadASD1(self._s(), repeats)
-                except socket.timeout:
+            count = max(1, int(repeats))
+
+            def repeated_legacy_read():
+                spectra = []
+                header = None
+                for _ in range(count):
+                    header, spectrum = ReadASD(self._s())
+                    spectra.append(spectrum)
+                if len(spectra) == 1:
+                    avg = spectra[0]
+                else:
+                    avg = np.mean(np.stack(spectra, axis=0), axis=0)
+                return header, avg
+
+            attempts = (
+                ("A,1,{}".format(count), lambda: ReadASD1(self._s(), count)),
+                ("A,1,{} retry".format(count), lambda: ReadASD1(self._s(), count)),
+                ("{}x legacy A".format(count), repeated_legacy_read),
+            )
+            last_exc = None
+            for idx, (label, reader) in enumerate(attempts):
+                if idx > 0:
                     self._trace(
                         "read_average",
-                        "A,1,{} retry timed out; reconnecting and falling back to repeated A".format(
-                            repeats
-                        ),
+                        "{} after reconnect".format(label),
                     )
                     self.reconnect()
-                    spectra = []
-                    header = None
-                    for _ in range(max(1, int(repeats))):
-                        header, spectrum = ReadASD(self._s())
-                        spectra.append(spectrum)
-                    if len(spectra) == 1:
-                        avg = spectra[0]
-                    else:
-                        avg = np.mean(np.stack(spectra, axis=0), axis=0)
-                    result = (header, avg)
-                except Exception as fallback_exc:
-                    self._mark_dead_if_transport_error(fallback_exc)
+                try:
+                    result = reader()
+                    break
+                except socket.timeout as exc:
+                    last_exc = exc
                     self._trace(
                         "read_average",
-                        "fallback FAILED repeats={} {}: {} elapsed={:.3f}s".format(
-                            repeats,
-                            type(fallback_exc).__name__,
-                            fallback_exc,
+                        "{} timed out after {:.3f}s".format(
+                            label, time.time() - t0
+                        ),
+                    )
+                    continue
+                except Exception as exc:
+                    self._mark_dead_if_transport_error(exc)
+                    self._trace(
+                        "read_average",
+                        "{} FAILED {}: {} elapsed={:.3f}s".format(
+                            label,
+                            type(exc).__name__,
+                            exc,
                             time.time() - t0,
                         ),
                     )
-                    raise fallback_exc from exc
-            except Exception as exc:
-                self._mark_dead_if_transport_error(exc)
-                self._trace("read_average", "FAILED repeats={} {}: {} elapsed={:.3f}s".format(
-                    repeats, type(exc).__name__, exc, time.time() - t0))
-                raise
+                    raise
+            else:
+                if last_exc is None:
+                    last_exc = TimeoutError("all read_average attempts failed")
+                self._mark_dead_if_transport_error(last_exc)
+                self._trace(
+                    "read_average",
+                    "FAILED repeats={} after all attempts {}: {} elapsed={:.3f}s".format(
+                        repeats,
+                        type(last_exc).__name__,
+                        last_exc,
+                        time.time() - t0,
+                    ),
+                )
+                raise last_exc
             self._trace("read_average", "ok repeats={} header[0]={} elapsed={:.3f}s".format(
                 repeats, result[0][0], time.time() - t0))
             return result

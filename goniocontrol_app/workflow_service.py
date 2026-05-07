@@ -182,27 +182,28 @@ class WorkflowService:
         return snapshot
 
     def probe_spectrometer_connected(self):
-        """Run a small spectrometer round trip to confirm the link is alive.
+        """Return cached spectrometer status without sending protocol commands.
 
-        MUST be called from a background thread: it acquires the spectrometer
-        I/O lock and may block on the socket. Returns "Connected" or
-        "NOT CONNECTED" and updates the cached connection flag in state.
+        The old command-line workflow only sends ``VNIRinfo`` during setup,
+        then applies ``SetOpt`` and leaves the socket ready for acquisition.
+        Polling ``VNIRinfo`` in the GUI status loop right before live reads
+        changes that command sequence and can leave the ASD server in a state
+        where acquisition commands never answer. Treat the transport flag as
+        the source of truth here; real I/O paths will mark it dead on failure.
         """
         if not self.state.devices.connected_spectrometer:
             print("DEBUG: probe_spectrometer skipped (flag=False)")
             return "NOT CONNECTED"
-        try:
-            self.spectrometer.vnir_info()
-            print("DEBUG: probe_spectrometer ok")
-            return "Connected"
-        except Exception as exc:
-            print("DEBUG: probe_spectrometer FAILED {}: {}".format(
-                type(exc).__name__, exc))
+        needs_reconnect = getattr(self.spectrometer, "needs_reconnect", None)
+        if callable(needs_reconnect) and needs_reconnect():
+            print("DEBUG: probe_spectrometer transport flag says reconnect needed")
             self.state.devices.connected_spectrometer = False
             return "NOT CONNECTED"
+        print("DEBUG: probe_spectrometer cached-ok")
+        return "Connected"
 
     def get_device_status_snapshot(self):
-        """Compose motor + spectrometer status. Performs blocking spectrometer I/O."""
+        """Compose motor + cached spectrometer status."""
         snapshot = self.get_motor_status_snapshot()
         snapshot["spectrometer"] = self.probe_spectrometer_connected()
         return snapshot
