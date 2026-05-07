@@ -84,6 +84,7 @@ class LiveSpectrumService:
             poll_id += 1
             t0 = time.perf_counter()
             print("DEBUG: LiveSpectrumService poll #{} starting".format(poll_id))
+            self._maybe_reconnect_before_poll(poll_id)
             try:
                 header, spectrum = self.spectrometer.read_single()
                 elapsed_s = max(0.001, time.perf_counter() - t0)
@@ -107,6 +108,32 @@ class LiveSpectrumService:
 
             self._stop_event.wait(self._next_interval_s)
         print("DEBUG: LiveSpectrumService loop exiting")
+
+    def _maybe_reconnect_before_poll(self, poll_id: int):
+        """Re-establish the spectrometer link if it has been marked dead.
+
+        Without this, once a BrokenPipeError or recv timeout flips the
+        ``needs_reconnect`` flag in SpectrometerService, every subsequent
+        poll would raise immediately and the live preview would be silently
+        stuck for the rest of the session.
+        """
+        needs_reconnect = getattr(self.spectrometer, "needs_reconnect", None)
+        reconnect = getattr(self.spectrometer, "reconnect", None)
+        if not callable(needs_reconnect) or not callable(reconnect):
+            return
+        if not needs_reconnect():
+            return
+        try:
+            print("DEBUG: LiveSpectrumService poll #{} reconnect attempt".format(poll_id))
+            reconnect()
+            print("DEBUG: LiveSpectrumService poll #{} reconnect ok".format(poll_id))
+            if self.emit_log:
+                self.emit_log("Live spectrum: reconnected to spectrometer.")
+        except Exception as exc:
+            print("DEBUG: LiveSpectrumService poll #{} reconnect FAILED {}: {}".format(
+                poll_id, type(exc).__name__, exc))
+            # Swallow: the upcoming read_single() will raise too and the
+            # error path below will keep us in backoff until the next try.
 
     def _on_poll_success(self):
         if self._error_streak > 0 and self.emit_log:

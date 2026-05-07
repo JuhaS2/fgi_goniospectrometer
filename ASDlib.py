@@ -69,22 +69,69 @@ def recvall(s, N, label=""):
     return b"".join(data)
 
 
+def peek_socket(s, max_bytes=8192, peek_timeout_s=0.05, label=""):
+    """Non-blocking drain of any bytes already buffered on ``s``.
+
+    Used purely for diagnostics: it lets us tell, before sending a fresh
+    command, whether the previous response left unread bytes behind (which
+    would cause the next response to be misaligned or to ``recv`` indefinitely
+    on the wrong message). Any drained bytes are logged and discarded.
+    """
+    old_to = s.gettimeout()
+    drained = bytearray()
+    try:
+        s.settimeout(peek_timeout_s)
+        while len(drained) < max_bytes:
+            try:
+                chunk = s.recv(min(4096, max_bytes - len(drained)))
+            except Exception:
+                # Either socket.timeout (nothing more to read) or a real
+                # error; either way stop here. We deliberately do not raise:
+                # this is a diagnostic helper and we want the caller to keep
+                # running.
+                break
+            if not chunk:
+                break
+            drained.extend(chunk)
+    finally:
+        try:
+            s.settimeout(old_to)
+        except Exception:
+            pass
+    if drained:
+        print(
+            "DEBUG: peek_socket label={!r} found {} unexpected leftover bytes (first 64={!r})".format(
+                label, len(drained), bytes(drained[:64])
+            )
+        )
+    else:
+        print("DEBUG: peek_socket label={!r} buffer clean (0 bytes)".format(label))
+    return bytes(drained)
+
+
 def Optimize(s):
     print("DEBUG: Optimize -> send b'OPT,7'")
     t0 = time.time()
+    # Drain any stale bytes that a previous command may have left behind.
+    # If we ever see leftovers here it is a strong signal that a prior op
+    # under-consumed its response and corrupted the byte stream.
+    peek_socket(s, label="Optimize.pre-send")
     s.sendall(b"OPT,7")
-    data = s.recv(32)
-    print("DEBUG: Optimize recv1 len={} timeout={}".format(len(data), s.gettimeout()))
-    if len(data) < 28:
-        more = s.recv(32)
-        print("DEBUG: Optimize recv2 len={} (total {})".format(len(more), len(data) + len(more)))
-        data += more
+    # Use recvall to consume exactly 28 bytes (the documented OPT,7 reply size:
+    # 7 big-endian ints). The previous code did ``s.recv(32)`` which could
+    # silently truncate (returning <28 in two TCP segments) or silently
+    # over-read on firmwares that pad the response, in either case leaving
+    # the byte stream out of sync for the next acquisition command.
+    data = recvall(s, 28, label="Optimize.header")
     header, errbyte, itime, gain1, gain2, offset1, offset2 = unpack(
         ">iiiiiii", data[:28]
     )
-    extra = len(data) - 28
+    # If the firmware sent more than 28 bytes in response to OPT,7, the extra
+    # bytes will still be sitting in the socket buffer. Drain them now so the
+    # next command's response is interpreted correctly.
+    leftover = peek_socket(s, label="Optimize.post-header")
     print("DEBUG: Optimize header={} err={} itime={} gain=[{},{}] offset=[{},{}] leftover_bytes={} elapsed={:.3f}s".format(
-        header, errbyte, itime, gain1, gain2, offset1, offset2, extra, time.time() - t0))
+        header, errbyte, itime, gain1, gain2, offset1, offset2, len(leftover), time.time() - t0))
     if header != 100:
         print("PROBLEMS IN OPTIMISATION")
         print(header, errbyte, itime, gain1, gain2, offset1, offset2)
@@ -202,8 +249,12 @@ def ReadASD1(s, count):
 
     com = ("A,1," + str(count)).encode("ASCII")
     expected = Nwl * 4 + 256
-    print("DEBUG: ReadASD1 send {!r} expecting {} bytes timeout={}".format(
-        com, expected, s.gettimeout()))
+    # Drain leftovers BEFORE sending the acquisition command. If a previous
+    # command under-consumed its reply, those bytes would otherwise satisfy
+    # part of our recv loop and the parsed spectrum would be garbage.
+    pre_leftover = peek_socket(s, label="ReadASD1.pre-send")
+    print("DEBUG: ReadASD1 send {!r} expecting {} bytes timeout={} pre_leftover={}".format(
+        com, expected, s.gettimeout(), len(pre_leftover)))
     s.sendall(com)
     l0 = 0
     datd = []
@@ -213,8 +264,14 @@ def ReadASD1(s, count):
         try:
             data = s.recv(expected - l0)
         except Exception as exc:
-            print("DEBUG: ReadASD1 recv error after {} of {} bytes elapsed={:.3f}s {}: {}".format(
-                l0, expected, time.time() - t0, type(exc).__name__, exc))
+            # On a recv timeout we have NOT received any answer to ``A,1,N``
+            # at all; this almost always means the firmware silently rejected
+            # the command form or is in a state where it will not respond.
+            # Log the socket state so the next debug session can tell which.
+            print("DEBUG: ReadASD1 recv error after {} of {} bytes chunks={} first_byte_at={} elapsed={:.3f}s {}: {}".format(
+                l0, expected, chunks,
+                "{:.3f}s".format(first_byte_at) if first_byte_at is not None else "never",
+                time.time() - t0, type(exc).__name__, exc))
             raise
         chunks += 1
         ln = len(data)
@@ -228,6 +285,8 @@ def ReadASD1(s, count):
             )
         if first_byte_at is None:
             first_byte_at = time.time() - t0
+            print("DEBUG: ReadASD1 first-byte after {:.3f}s chunk_len={}".format(
+                first_byte_at, ln))
         datd.append(data)
         l0 += ln
     datc = b"".join(datd)

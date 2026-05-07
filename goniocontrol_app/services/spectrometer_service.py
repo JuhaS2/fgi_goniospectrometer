@@ -27,6 +27,11 @@ class SpectrometerService:
         self.default_timeout_s = default_timeout_s
         self.socket: Optional[socket.socket] = None
         self._lock = threading.RLock()
+        # Set when a hard transport error (broken pipe / connection reset)
+        # invalidates ``self.socket``. Read paths check this flag before they
+        # touch the socket and trigger a reconnect instead of issuing a send
+        # that would otherwise raise BrokenPipeError forever.
+        self._needs_reconnect = False
 
     def _trace(self, op: str, msg: str = ""):
         thread = threading.current_thread().name
@@ -53,10 +58,50 @@ class SpectrometerService:
             if self.default_timeout_s is not None:
                 sock.settimeout(self.default_timeout_s)
             self.socket = sock
+            self._needs_reconnect = False
             greeting = sock.recv(128)
             self._trace("connect", "greeting len={} bytes={!r}".format(
                 len(greeting), greeting[:64]))
             return greeting
+
+    def reconnect(self):
+        """Tear down the existing socket (if any) and dial a fresh one.
+
+        Used by callers that have observed a transport-level failure and
+        want subsequent operations to succeed once the spectrometer is
+        responsive again. Returns the greeting bytes from the new socket.
+        Caller is responsible for retrying any in-flight workflow.
+        """
+        with self._locked("reconnect"):
+            old = self.socket
+            self.socket = None
+            self._needs_reconnect = False
+            if old is not None:
+                try:
+                    old.shutdown(socket.SHUT_RDWR)
+                except OSError as exc:
+                    self._trace("reconnect", "shutdown skipped {}: {}".format(
+                        type(exc).__name__, exc))
+                try:
+                    old.close()
+                except OSError as exc:
+                    self._trace("reconnect", "close skipped {}: {}".format(
+                        type(exc).__name__, exc))
+            self._trace("reconnect", "dialing host={} port={}".format(
+                self.host, self.port))
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.connect((self.host, self.port))
+            if self.default_timeout_s is not None:
+                sock.settimeout(self.default_timeout_s)
+            self.socket = sock
+            greeting = sock.recv(128)
+            self._trace("reconnect", "greeting len={} bytes={!r}".format(
+                len(greeting), greeting[:64]))
+            return greeting
+
+    def needs_reconnect(self) -> bool:
+        return self._needs_reconnect or self.socket is None
 
     def close(self):
         sock = self.socket
@@ -84,15 +129,48 @@ class SpectrometerService:
                 self._lock.release()
 
     def _s(self):
-        if self.socket is None:
-            raise RuntimeError("Spectrometer is not connected.")
+        if self.socket is None or self._needs_reconnect:
+            raise ConnectionError(
+                "Spectrometer link is down (needs reconnect={}).".format(
+                    self._needs_reconnect
+                )
+            )
         return self.socket
+
+    # Errors that indicate the TCP connection is unusable and a fresh
+    # ``reconnect()`` is required before the next command can succeed.
+    # ``socket.timeout`` is included because, empirically, the ASD's TCP
+    # server resets the connection after a long recv stall, which means any
+    # operation after a recv timeout will fail with BrokenPipeError until
+    # we reconnect. Treating the timeout itself as fatal-to-the-link lets
+    # the next attempt rebuild the socket immediately instead of wasting
+    # 30 more seconds on a doomed retry.
+    _TRANSPORT_DEAD_EXCEPTIONS = (
+        BrokenPipeError,
+        ConnectionResetError,
+        ConnectionAbortedError,
+        ConnectionRefusedError,
+        ConnectionError,
+        socket.timeout,
+    )
+
+    def _mark_dead_if_transport_error(self, exc: BaseException):
+        if isinstance(exc, self._TRANSPORT_DEAD_EXCEPTIONS):
+            if not self._needs_reconnect:
+                self._trace(
+                    "transport",
+                    "marking link dead, reconnect required ({}: {})".format(
+                        type(exc).__name__, exc
+                    ),
+                )
+            self._needs_reconnect = True
 
     def restore(self):
         with self._locked("restore"):
             try:
                 Restore(self._s())
             except Exception as exc:
+                self._mark_dead_if_transport_error(exc)
                 self._trace("restore", "FAILED {}: {}".format(type(exc).__name__, exc))
                 raise
 
@@ -102,6 +180,7 @@ class SpectrometerService:
             try:
                 result = Optimize(self._s())
             except Exception as exc:
+                self._mark_dead_if_transport_error(exc)
                 self._trace("optimize", "FAILED {}: {}".format(type(exc).__name__, exc))
                 raise
             self._trace("optimize", "ok header={} elapsed={:.3f}s".format(
@@ -113,6 +192,7 @@ class SpectrometerService:
             try:
                 SetOpt(self._s(), itime, gain, offset)
             except Exception as exc:
+                self._mark_dead_if_transport_error(exc)
                 self._trace("set_opt", "FAILED {}: {}".format(type(exc).__name__, exc))
                 raise
 
@@ -126,6 +206,7 @@ class SpectrometerService:
             try:
                 result = ReadASD1(self._s(), 1)
             except Exception as exc:
+                self._mark_dead_if_transport_error(exc)
                 self._trace("read_single", "FAILED {}: {} elapsed={:.3f}s".format(
                     type(exc).__name__, exc, time.time() - t0))
                 raise
@@ -139,6 +220,7 @@ class SpectrometerService:
             try:
                 result = ReadASD1(self._s(), repeats)
             except Exception as exc:
+                self._mark_dead_if_transport_error(exc)
                 self._trace("read_average", "FAILED repeats={} {}: {} elapsed={:.3f}s".format(
                     repeats, type(exc).__name__, exc, time.time() - t0))
                 raise
@@ -152,6 +234,7 @@ class SpectrometerService:
             try:
                 result = VNIRinfo(self._s())
             except Exception as exc:
+                self._mark_dead_if_transport_error(exc)
                 self._trace("vnir_info", "FAILED {}: {} elapsed={:.3f}s".format(
                     type(exc).__name__, exc, time.time() - t0))
                 raise
