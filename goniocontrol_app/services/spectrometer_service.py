@@ -210,9 +210,16 @@ class SpectrometerService:
             except socket.timeout as exc:
                 self._trace(
                     "read_single",
-                    "legacy ReadASD timed out; trying A,1,1 fallback",
+                    "legacy ReadASD timed out; reconnecting and retrying ReadASD",
                 )
                 try:
+                    self.reconnect()
+                    result = ReadASD(self._s())
+                except socket.timeout:
+                    self._trace(
+                        "read_single",
+                        "ReadASD retry timed out; reconnecting and trying A,1,1 fallback",
+                    )
                     self.reconnect()
                     result = ReadASD1(self._s(), 1)
                 except Exception as fallback_exc:
@@ -246,11 +253,20 @@ class SpectrometerService:
                 # often leaves the server-side session wedged.
                 self._trace(
                     "read_average",
-                    "A,1,{} timed out; reconnecting and falling back to repeated A".format(
+                    "A,1,{} timed out; reconnecting and retrying A,1,N".format(
                         repeats
                     ),
                 )
                 try:
+                    self.reconnect()
+                    result = ReadASD1(self._s(), repeats)
+                except socket.timeout:
+                    self._trace(
+                        "read_average",
+                        "A,1,{} retry timed out; reconnecting and falling back to repeated A".format(
+                            repeats
+                        ),
+                    )
                     self.reconnect()
                     spectra = []
                     header = None
