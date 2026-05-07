@@ -13,6 +13,7 @@ class LiveSpectrumService:
         should_idle_poll: Optional[Callable[[], bool]] = None,
         min_interval_s: float = 0.1,
         max_interval_s: float = 1.0,
+        error_max_interval_s: float = 30.0,
         interval_factor: float = 1.2,
     ):
         self.spectrometer = spectrometer
@@ -20,6 +21,7 @@ class LiveSpectrumService:
         self.should_idle_poll = should_idle_poll or (lambda: True)
         self.min_interval_s = min_interval_s
         self.max_interval_s = max_interval_s
+        self.error_max_interval_s = max(error_max_interval_s, max_interval_s)
         self.interval_factor = interval_factor
 
         self._lock = threading.Lock()
@@ -29,6 +31,8 @@ class LiveSpectrumService:
         self._latest_seq = 0
         self._next_interval_s = self.min_interval_s
         self._error_backoff_s = self.max_interval_s
+        self._last_error_message: Optional[str] = None
+        self._error_streak = 0
 
     def start(self):
         with self._lock:
@@ -85,15 +89,40 @@ class LiveSpectrumService:
                     self.max_interval_s,
                     max(self.min_interval_s, tuned),
                 )
+                self._on_poll_success()
             except Exception as exc:
-                if self.emit_log:
-                    self.emit_log("Live spectrum poll failed: {}".format(exc))
-                self._next_interval_s = min(
-                    self.max_interval_s,
-                    max(self.min_interval_s, self._error_backoff_s),
-                )
-                self._error_backoff_s = min(self.max_interval_s, self._error_backoff_s * 1.5)
-            else:
-                self._error_backoff_s = self.max_interval_s
+                self._on_poll_failure(exc)
 
             self._stop_event.wait(self._next_interval_s)
+
+    def _on_poll_success(self):
+        if self._error_streak > 0 and self.emit_log:
+            self.emit_log(
+                "Live spectrum poll recovered after {} failures.".format(
+                    self._error_streak
+                )
+            )
+        self._error_streak = 0
+        self._last_error_message = None
+        self._error_backoff_s = self.max_interval_s
+
+    def _on_poll_failure(self, exc: BaseException):
+        message = "{}: {}".format(type(exc).__name__, exc)
+        self._error_streak += 1
+        # Log the first occurrence of an error and any change in error type;
+        # otherwise stay quiet so a dead spectrometer link cannot flood the
+        # log every second.
+        if self.emit_log and message != self._last_error_message:
+            self.emit_log("Live spectrum poll failed: {}".format(message))
+        self._last_error_message = message
+
+        # Backoff grows exponentially up to ``error_max_interval_s`` so a hard
+        # error (e.g. broken pipe) eventually polls only every few seconds.
+        self._error_backoff_s = min(
+            self.error_max_interval_s,
+            max(self.max_interval_s, self._error_backoff_s * 1.5),
+        )
+        self._next_interval_s = min(
+            self.error_max_interval_s,
+            max(self.min_interval_s, self._error_backoff_s),
+        )

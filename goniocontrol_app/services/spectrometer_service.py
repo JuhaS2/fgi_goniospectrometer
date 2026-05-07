@@ -2,7 +2,7 @@ import socket
 import threading
 from typing import Optional
 
-from ASDlib import Optimize, ReadASD, ReadASD1, Restore, SetOpt, VNIRinfo
+from ASDlib import Optimize, ReadASD1, Restore, SetOpt, VNIRinfo
 
 
 class SpectrometerService:
@@ -75,8 +75,12 @@ class SpectrometerService:
             SetOpt(self._s(), itime, gain, offset)
 
     def read_single(self):
+        # Use the canonical "A,1,1" form via ReadASD1 instead of the bare
+        # ``b"A"`` that ASDlib.ReadASD sends. The ASD firmware does not respond
+        # to the bare command in our setup; the result is a recv timeout
+        # followed by a broken pipe on the next send.
         with self._lock:
-            return ReadASD(self._s())
+            return ReadASD1(self._s(), 1)
 
     def read_average(self, repeats):
         with self._lock:

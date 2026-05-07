@@ -125,20 +125,21 @@ def VNIRinfo(s):
     data = recvall(s, 50)
     name = str(30)
     header, errbyte, name, Vwl1, count = unpack(">ii30sdi", data[:50])
-    print(header, errbyte, name, Vwl1, count)
+    # print(header, errbyte, name, Vwl1, count)
 
     s.sendall(b"INIT,0,VDarkCurrentCorrection")
     data = recvall(s, 50)  # s.recv(64)
     name = str(30)
     header, errbyte, name, VDCC, count = unpack(">ii30sdi", data[:50])
 
-    print(header, errbyte, name, "VDCC:", VDCC, count)
+    # print(header, errbyte, name, "VDCC:", VDCC, count)
 
     s.sendall(b"INIT,0,VEndingWavelength")
     data = recvall(s, 50)  # s.recv(64)
     name = str(30)
     header, errbyte, name, Vwl2, count = unpack(">ii30sdi", data[:50])
-    print(header, errbyte, name, Vwl2, count)
+    # print(header, errbyte, name, Vwl2, count)
+    print(Vwl1, Vwl2, VDCC)
     return Vwl1, Vwl2, VDCC
 
 
