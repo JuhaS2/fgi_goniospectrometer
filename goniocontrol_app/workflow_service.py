@@ -96,13 +96,13 @@ class WorkflowService:
             )
 
         try:
-            print("DEBUG: connect_devices -> spectrometer.connect()")
+            # print("DEBUG: connect_devices -> spectrometer.connect()")
             greeting = self.spectrometer.connect()
-            print("DEBUG: connect_devices spectrometer greeting len={}".format(
-                len(greeting) if greeting is not None else -1))
+            # print("DEBUG: connect_devices spectrometer greeting len={}".format(
+                # len(greeting) if greeting is not None else -1))
         except Exception as exc:
-            print("DEBUG: connect_devices spectrometer.connect FAILED {}: {}".format(
-                type(exc).__name__, exc))
+            # print("DEBUG: connect_devices spectrometer.connect FAILED {}: {}".format(
+                # type(exc).__name__, exc))
             raise PreconditionError(
                 "Could not connect to spectrometer at configured host/port."
             ) from exc
@@ -192,14 +192,14 @@ class WorkflowService:
         the source of truth here; real I/O paths will mark it dead on failure.
         """
         if not self.state.devices.connected_spectrometer:
-            print("DEBUG: probe_spectrometer skipped (flag=False)")
+            # print("DEBUG: probe_spectrometer skipped (flag=False)")
             return "NOT CONNECTED"
         needs_reconnect = getattr(self.spectrometer, "needs_reconnect", None)
         if callable(needs_reconnect) and needs_reconnect():
-            print("DEBUG: probe_spectrometer transport flag says reconnect needed")
+            # print("DEBUG: probe_spectrometer transport flag says reconnect needed")
             self.state.devices.connected_spectrometer = False
             return "NOT CONNECTED"
-        print("DEBUG: probe_spectrometer cached-ok")
+        # print("DEBUG: probe_spectrometer cached-ok")
         return "Connected"
 
     def get_device_status_snapshot(self):
@@ -209,10 +209,10 @@ class WorkflowService:
         return snapshot
 
     def load_runtime_state(self):
-        print("DEBUG: load_runtime_state begin")
+        # print("DEBUG: load_runtime_state begin")
         self.load_runtime_settings()
         self.state.runtime_notice = None
-        print("DEBUG: load_runtime_state -> vnir_info()")
+        # print("DEBUG: load_runtime_state -> vnir_info()")
         vwl1, _, vdcc = self.spectrometer.vnir_info()
         self.state.calibration.optimizer_header = self.persistence.load_optional_array(
             "Oheader.npy"
@@ -250,15 +250,16 @@ class WorkflowService:
 
         hdr = self.state.calibration.optimizer_header
         if hdr is not None:
-            print("DEBUG: load_runtime_state -> set_opt(cached itime={} gain={} offset={})".format(
-                hdr[2], hdr[3], hdr[4]))
+            # print("DEBUG: load_runtime_state -> set_opt(cached itime={} gain={} offset={})".format(
+                # hdr[2], hdr[3], hdr[4]))
             self.spectrometer.set_opt(hdr[2], hdr[3], hdr[4])
         else:
-            print("DEBUG: load_runtime_state no cached Oheader, skipping set_opt")
+            # print("DEBUG: load_runtime_state no cached Oheader, skipping set_opt")
+            pass
         self._vwl1 = vwl1
         self._vdcc = vdcc
         self._wl = vwl1 + np.arange(Nwl)
-        print("DEBUG: load_runtime_state done vwl1={} vdcc={}".format(vwl1, vdcc))
+        # print("DEBUG: load_runtime_state done vwl1={} vdcc={}".format(vwl1, vdcc))
 
     def load_runtime_settings(self):
         defaults = {
@@ -338,15 +339,15 @@ class WorkflowService:
         cannot prevent the GUI from coming up. Returns the optimizer header
         on success, otherwise ``None``.
         """
-        print("DEBUG: auto_optimize_on_startup begin")
+        # print("DEBUG: auto_optimize_on_startup begin")
         last_header = None
         success = False
         for idx in range(25):
             try:
                 header = self.spectrometer.optimize()
             except Exception as exc:
-                print("DEBUG: auto_optimize attempt {} raised {}: {}".format(
-                    idx + 1, type(exc).__name__, exc))
+                # print("DEBUG: auto_optimize attempt {} raised {}: {}".format(
+                    # idx + 1, type(exc).__name__, exc))
                 if progress:
                     progress(
                         "Startup optimize attempt {} failed: {}: {}".format(
@@ -355,8 +356,8 @@ class WorkflowService:
                     )
                 return None
             last_header = header
-            print("DEBUG: auto_optimize attempt {} header={} itime={} gain={} offset={}".format(
-                idx + 1, header[0], header[2], header[3], header[4]))
+            # print("DEBUG: auto_optimize attempt {} header={} itime={} gain={} offset={}".format(
+                # idx + 1, header[0], header[2], header[3], header[4]))
             if progress:
                 progress(
                     "Startup optimize {}/25 => header {}".format(idx + 1, header[0])
@@ -373,21 +374,21 @@ class WorkflowService:
                 self.persistence.save_array(
                     "Oheader.npy", self.state.calibration.optimizer_header
                 )
-                print("DEBUG: auto_optimize Oheader saved")
+                # print("DEBUG: auto_optimize Oheader saved")
             except Exception as exc:
-                print("DEBUG: auto_optimize Oheader save failed {}: {}".format(
-                    type(exc).__name__, exc))
+                # print("DEBUG: auto_optimize Oheader save failed {}: {}".format(
+                    # type(exc).__name__, exc))
                 if progress:
                     progress(
                         "Startup optimize: could not persist Oheader.npy ({}: {}).".format(
                             type(exc).__name__, exc
                         )
                     )
-            print("DEBUG: auto_optimize_on_startup success header={}".format(
-                last_header))
+            # print("DEBUG: auto_optimize_on_startup success header={}".format(
+                # last_header))
             return last_header
 
-        print("DEBUG: auto_optimize_on_startup did not converge")
+        # print("DEBUG: auto_optimize_on_startup did not converge")
         if progress:
             progress(
                 "Startup optimize did not converge after 25 attempts; "

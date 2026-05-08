@@ -14,6 +14,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
+from asdcontroller.asd_types import ITimeEnum
 from goniocontrol_app.gui_controller import GuiController
 from goniocontrol_app.services.mock_services import (
     MockLCCService,
@@ -121,6 +122,8 @@ class GoniocontrolGUI(tk.Tk):
         self.live_timestamp_var = tk.StringVar(value="n/a")
         self._live_last_seq = -1
         self._live_line = None
+        self._dark_collected_at = None
+        self._white_collected_at = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._shutdown)
@@ -616,11 +619,41 @@ class GoniocontrolGUI(tk.Tk):
             return "Not optimized yet!"
         try:
             itime = int(header[2])
-            gain = [int(header[3][0]), int(header[3][1])]
-            offset = [int(header[4][0]), int(header[4][1])]
+            gain_1 = int(header[3][0])
+            gain_2 = int(header[3][1])
+            offset_1 = int(header[4][0])
+            offset_2 = int(header[4][1])
         except Exception:
             return "Optimize parameters unavailable"
-        return "itime={} gain={} offset={}".format(itime, gain, offset)
+        try:
+            itime_label = ITimeEnum(itime).to_str().replace(" ", "")
+        except Exception:
+            itime_label = str(itime)
+        return "{}, {}, {}, {}, {}".format(
+            itime_label, gain_1, gain_2, offset_1, offset_2
+        )
+
+    def _format_collection_status(self, collected_at):
+        now = datetime.now()
+        delta = now - collected_at
+        total_seconds = max(0, int(delta.total_seconds()))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            ago = "{:02d}:{:02d}:{:02d} ago".format(hours, minutes, seconds)
+        else:
+            ago = "{:02d}:{:02d} ago".format(minutes, seconds)
+        return "{} ({})".format(collected_at.strftime("%H:%M:%S"), ago)
+
+    def _refresh_collection_status_labels(self):
+        if self._dark_collected_at is not None:
+            self.dark_last_measured_var.set(
+                self._format_collection_status(self._dark_collected_at)
+            )
+        if self._white_collected_at is not None:
+            self.white_last_measured_var.set(
+                self._format_collection_status(self._white_collected_at)
+            )
 
     def _browse_output_file(self):
         current = Path(
@@ -730,13 +763,28 @@ class GoniocontrolGUI(tk.Tk):
         )
 
     def _dark(self):
+        proceed = messagebox.askokcancel(
+            "Dark Current",
+            "Close shutter",
+        )
+        if not proceed:
+            return
+
         def run():
             self.workflow.collect_dark()
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            collected_at = datetime.now()
+            self._dark_collected_at = collected_at
             self.after(
                 0,
                 lambda: self.dark_last_measured_var.set(
-                    "Last collection: {}".format(timestamp)
+                    self._format_collection_status(collected_at)
+                ),
+            )
+            self.after(
+                0,
+                lambda: messagebox.showinfo(
+                    "Dark Current",
+                    "Open shutter",
                 ),
             )
 
@@ -746,11 +794,12 @@ class GoniocontrolGUI(tk.Tk):
         def run():
             za = float(self.sensor_zenith_var.get() or "0")
             self.workflow.collect_white(za)
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            collected_at = datetime.now()
+            self._white_collected_at = collected_at
             self.after(
                 0,
                 lambda: self.white_last_measured_var.set(
-                    "Last collection: {}".format(timestamp)
+                    self._format_collection_status(collected_at)
                 ),
             )
 
@@ -936,6 +985,7 @@ class GoniocontrolGUI(tk.Tk):
         if self._shutting_down:
             return
         self._update_device_status_labels()
+        self._refresh_collection_status_labels()
         self._submit_spectrometer_probe()
         self.after(2000, self._refresh_device_status)
 

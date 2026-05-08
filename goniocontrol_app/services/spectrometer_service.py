@@ -37,7 +37,7 @@ class SpectrometerService:
     def _trace(self, op: str, msg: str = ""):
         thread = threading.current_thread().name
         suffix = (" " + msg) if msg else ""
-        print("DEBUG: SpectrometerService[{}] {}{}".format(thread, op, suffix))
+        # print("DEBUG: SpectrometerService[{}] {}{}".format(thread, op, suffix))
 
     def _locked(self, op: str):
         thread = threading.current_thread().name
@@ -46,8 +46,8 @@ class SpectrometerService:
         self._lock.acquire()
         wait_s = time.time() - t0
         if wait_s > 0.001:
-            print("DEBUG: SpectrometerService[{}] {} got-lock wait={:.3f}s".format(
-                thread, op, wait_s))
+            # print("DEBUG: SpectrometerService[{}] {} got-lock wait={:.3f}s".format(
+                # thread, op, wait_s))
         return _LockHandle(self._lock, op, thread)
 
     def _dispose_controller(self):
@@ -328,9 +328,9 @@ class _LockHandle:
         except Exception:
             pass
         if exc_type is None:
-            print("DEBUG: SpectrometerService[{}] {} release".format(
-                self._thread, self._op))
+            # print("DEBUG: SpectrometerService[{}] {} release".format(
+                # self._thread, self._op))
         else:
-            print("DEBUG: SpectrometerService[{}] {} release-after-error {}: {}".format(
-                self._thread, self._op, exc_type.__name__, exc))
+            # print("DEBUG: SpectrometerService[{}] {} release-after-error {}: {}".format(
+                # self._thread, self._op, exc_type.__name__, exc))
         return False
