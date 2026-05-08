@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
+import math
 import subprocess
 import sys
 import tkinter as tk
@@ -1125,7 +1126,18 @@ class GoniocontrolGUI(tk.Tk):
 
                 self.live_plot_status_var.set(status)
                 self._live_ax.relim()
-                self._live_ax.autoscale_view()
+                if mode == "reflectance" and y_live is not None:
+                    finite = np.asarray(y_live, dtype=float)
+                    finite = finite[np.isfinite(finite)]
+                    if finite.size > 0:
+                        p99 = float(np.percentile(finite, 99))
+                        ymax = min(5.0, math.ceil((p99 + 0.1) * 10.0) / 10.0)
+                        ymax = max(0.1, ymax)
+                        self._live_ax.set_ylim(-0.05, ymax)
+                    else:
+                        self._live_ax.autoscale_view()
+                else:
+                    self._live_ax.autoscale_view()
                 self.live_canvas.draw_idle()
                 self._live_last_seq = seq
             source = latest.get("source", "unknown")
