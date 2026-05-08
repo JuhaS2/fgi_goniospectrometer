@@ -7,7 +7,8 @@ Use this checklist on Raspberry Pi + instrument to validate parity with legacy C
 - [ ] `run-goniocontrol-gui` launches without traceback.
 - [ ] `Connect Devices` discovers expected motors (zenith, azimuth, sample, polarizers as available).
 - [ ] Spectrometer connects to `169.254.1.11:8080`.
-- [ ] Angle file loads correctly (`Angles.txt` or selected alternate file).
+- [ ] Sequence file loads correctly (v1 file with `# seq_format_version: 1` and header row).
+- [ ] Legacy sequence file loads only when it includes `# seq_format_version: legacy-v0`.
 - [ ] Runtime state directory is shown in startup log and points outside repo root (unless fallback is needed).
 
 ## Command parity

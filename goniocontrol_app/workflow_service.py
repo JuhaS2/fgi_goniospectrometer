@@ -231,7 +231,7 @@ class WorkflowService:
         try:
             self.state.angles = self.persistence.read_angles(self.state.angles_file)
         except FileNotFoundError:
-            fallback = Path("Angles.txt")
+            fallback = Path("example_sequences/PrincipalPlane_5deg.seq.txt")
             fallback_resolved = self.resolve_path(fallback)
             self.state.runtime_notice = (
                 "Saved angles file not found ({}); falling back to {}.".format(

@@ -1,11 +1,12 @@
 import json
 import pickle
+import re
 import shutil
 import sys
 from datetime import datetime
 from os import environ
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -13,6 +14,15 @@ from goniocontrol_app.state import AngleRow, AppState
 
 
 class PersistenceService:
+    _SEQ_VERSION_RE = re.compile(r"^#\s*seq_format_version\s*:\s*(.+?)\s*$", re.IGNORECASE)
+    _SEQ_V1_COLUMNS = [
+        "SensorZen",
+        "SensorAz",
+        "TargetRotation",
+        "SensorPolarizerAngle",
+        "LampPolarizerAngle",
+    ]
+
     def __init__(self, workspace, state_dir=None):
         self.workspace = Path(workspace).resolve()
         self.state_dir = self._resolve_state_dir(state_dir)
@@ -73,18 +83,96 @@ class PersistenceService:
 
     def read_angles(self, angle_file):
         path = angle_file if angle_file.is_absolute() else self.workspace / angle_file
-        rows = []
+        rows: List[Tuple[float, float, float, float, float, float, float]] = []
+        content_rows: List[Tuple[int, str]] = []
+        version = None
         with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+            for line_number, line in enumerate(handle, start=1):
                 stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
+                if not stripped:
                     continue
-                if stripped.startswith("S"):
+                if stripped.startswith("#"):
+                    match = self._SEQ_VERSION_RE.match(stripped)
+                    if match is not None:
+                        version = match.group(1).strip().lower()
+                    continue
+                content_rows.append((line_number, stripped))
+
+        if not version:
+            raise ValueError(
+                "Angles file missing required version comment. Add '# seq_format_version: 1' "
+                "for new format or '# seq_format_version: legacy-v0' for legacy format."
+            )
+
+        if version == "1":
+            if not content_rows:
+                return rows
+            header_line_no, header_row = content_rows[0]
+            header_cols = [part.strip() for part in header_row.split("\t")]
+            if header_cols != self._SEQ_V1_COLUMNS:
+                raise ValueError(
+                    "Invalid v1 sequence header on line {}. Expected tab-separated columns: {}".format(
+                        header_line_no, ", ".join(self._SEQ_V1_COLUMNS)
+                    )
+                )
+
+            for line_no, data_row in content_rows[1:]:
+                parts = [part.strip() for part in data_row.split("\t")]
+                if len(parts) != 5:
+                    raise ValueError(
+                        "Invalid v1 sequence row on line {}: expected 5 tab-separated values.".format(
+                            line_no
+                        )
+                    )
+                try:
+                    sensor_zen, sensor_az, target_rotation, sensor_pol, lamp_pol = [
+                        float(x) for x in parts
+                    ]
+                except ValueError as exc:
+                    raise ValueError(
+                        "Invalid numeric value on line {} in v1 sequence file.".format(line_no)
+                    ) from exc
+
+                rows.append(
+                    (
+                        sensor_pol,  # sz
+                        lamp_pol,  # sa00
+                        sensor_zen,  # ze
+                        sensor_az,  # az
+                        target_rotation,  # be
+                        0.0,  # wwa
+                        1.0,  # wwb
+                    )
+                )
+            return rows
+
+        if version in ("legacy-v0", "legacy_v0"):
+            for line_no, row in content_rows:
+                if row.startswith("S"):
                     break
-                vals = [float(x) for x in stripped.split()]
-                if len(vals) != 7:
-                    continue
+                parts = row.split()
+                if len(parts) != 7:
+                    raise ValueError(
+                        "Invalid legacy sequence row on line {}: expected 7 values.".format(
+                            line_no
+                        )
+                    )
+                try:
+                    vals = [float(x) for x in parts]
+                except ValueError as exc:
+                    raise ValueError(
+                        "Invalid numeric value on line {} in legacy sequence file.".format(
+                            line_no
+                        )
+                    ) from exc
                 rows.append(tuple(vals))  # type: ignore[arg-type]
+            return rows
+
+        raise ValueError(
+            "Unsupported sequence format version '{}'. Supported values: 1, legacy-v0.".format(
+                version
+            )
+        )
         return rows
 
     def load_optional_array(self, filename):
@@ -172,7 +260,11 @@ class PersistenceService:
     def load_runtime_settings(self, defaults):
         settings = {
             "outfile": str(self._resolve_outfile_path(str(defaults.get("outfile", "Test00")))),
-            "angles_file": str(defaults.get("angles_file", "Angles.txt")),
+            "angles_file": str(
+                defaults.get(
+                    "angles_file", "example_sequences/PrincipalPlane_5deg.seq.txt"
+                )
+            ),
             "reflectance_mode": bool(defaults.get("reflectance_mode", True)),
         }
         path = self._state_path("runtime_settings.json")

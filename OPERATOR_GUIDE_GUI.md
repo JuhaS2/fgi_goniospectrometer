@@ -32,7 +32,7 @@ From the repository root (`C:\git\fgi_goniospectrometer`):
    - Run `Preflight` and verify required files are present.
 2. **Measurement Setup**:
    - Set output file and press `New Dataset`.
-   - Select angle file (`Angles.txt` or `Angles_PanelReflCalib.txt`).
+   - Select a sequence file (prefer `*.seq.txt`; other filenames also import if content is valid).
    - Choose reflectance or radiance mode.
 3. **Calibration**:
    - `Restore Spectrometer` (optional if needed).
@@ -68,4 +68,11 @@ From the repository root (`C:\git\fgi_goniospectrometer`):
 
 - GUI preserves legacy workflow logic but runs long operations in background worker threads.
 - `Calibrate Polarizer` is exposed; original model in legacy script is incomplete and remains operator-assisted.
+- Sequence file format:
+  - New format requires comment `# seq_format_version: 1`.
+  - First non-empty non-comment row is tab-separated header:
+    - `SensorZen`, `SensorAz`, `TargetRotation`, `SensorPolarizerAngle`, `LampPolarizerAngle`
+  - Data rows are tab-separated numeric values following the same column order.
+  - Lines beginning with `#` are treated as comments and ignored.
+  - Legacy 7-column files are supported only when file includes `# seq_format_version: legacy-v0`.
 

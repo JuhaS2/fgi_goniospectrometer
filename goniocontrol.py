@@ -99,7 +99,9 @@ class GoniocontrolGUI(tk.Tk):
         default_outfile = str((self.workspace / "Test00.pickle").resolve())
         self.outfile_var = tk.StringVar(value=default_outfile)
         self.state_obj.outfile = default_outfile
-        self.angle_var = tk.StringVar(value=str(self.workspace / "Angles.txt"))
+        self.angle_var = tk.StringVar(
+            value=str(self.workspace / "example_sequences/PrincipalPlane_5deg.seq.txt")
+        )
         self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
         self.repeats_var = tk.StringVar(value="1")
         self.sensor_zenith_var = tk.StringVar(value="0")
@@ -730,7 +732,11 @@ class GoniocontrolGUI(tk.Tk):
         selected = filedialog.askopenfilename(
             title="Select angle file",
             initialdir=self.workspace,
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            filetypes=[
+                ("Sequence files", "*.seq.txt *.seq"),
+                ("Text files", "*.txt"),
+                ("All files", "*.*"),
+            ],
         )
         if selected:
             self.angle_var.set(selected)

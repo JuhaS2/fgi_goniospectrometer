@@ -56,7 +56,9 @@ class AppState:
     workspace: Path
     outfile: str = "Test00"
     reflectance_mode: bool = True
-    angles_file: Path = field(default_factory=lambda: Path("Angles.txt"))
+    angles_file: Path = field(
+        default_factory=lambda: Path("example_sequences/PrincipalPlane_5deg.seq.txt")
+    )
     angles: List[AngleRow] = field(default_factory=list)
     data: List[np.ndarray] = field(default_factory=list)
     runtime_notice: Optional[str] = None
