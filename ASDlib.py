@@ -40,8 +40,11 @@ def recvall(s, N, label=""):
     loop never advanced. We now raise ``ConnectionError`` so the caller sees
     a real failure instead of a hang.
     """
-    print("DEBUG: recvall start label={!r} need={} timeout={}".format(
-        label, N, s.gettimeout()))
+    print(
+        "DEBUG: recvall start label={!r} need={} timeout={}".format(
+            label, N, s.gettimeout()
+        )
+    )
     t0 = time.time()
     ln = 0
     data = []
@@ -50,13 +53,19 @@ def recvall(s, N, label=""):
         try:
             d = s.recv(N - ln)
         except Exception as exc:
-            print("DEBUG: recvall recv error label={!r} after={} of {} elapsed={:.3f}s {}: {}".format(
-                label, ln, N, time.time() - t0, type(exc).__name__, exc))
+            print(
+                "DEBUG: recvall recv error label={!r} after={} of {} elapsed={:.3f}s {}: {}".format(
+                    label, ln, N, time.time() - t0, type(exc).__name__, exc
+                )
+            )
             raise
         chunks += 1
         if not d:
-            print("DEBUG: recvall EOF label={!r} after={} of {} chunks={} elapsed={:.3f}s".format(
-                label, ln, N, chunks, time.time() - t0))
+            print(
+                "DEBUG: recvall EOF label={!r} after={} of {} chunks={} elapsed={:.3f}s".format(
+                    label, ln, N, chunks, time.time() - t0
+                )
+            )
             raise ConnectionError(
                 "Spectrometer closed the connection after {} of {} bytes ({})".format(
                     ln, N, label or "recvall"
@@ -64,8 +73,11 @@ def recvall(s, N, label=""):
             )
         data.append(d)
         ln += len(d)
-    print("DEBUG: recvall done label={!r} total={} chunks={} elapsed={:.3f}s".format(
-        label, ln, chunks, time.time() - t0))
+    print(
+        "DEBUG: recvall done label={!r} total={} chunks={} elapsed={:.3f}s".format(
+            label, ln, chunks, time.time() - t0
+        )
+    )
     return b"".join(data)
 
 
@@ -130,8 +142,19 @@ def Optimize(s):
     # bytes will still be sitting in the socket buffer. Drain them now so the
     # next command's response is interpreted correctly.
     leftover = peek_socket(s, label="Optimize.post-header")
-    print("DEBUG: Optimize header={} err={} itime={} gain=[{},{}] offset=[{},{}] leftover_bytes={} elapsed={:.3f}s".format(
-        header, errbyte, itime, gain1, gain2, offset1, offset2, len(leftover), time.time() - t0))
+    print(
+        "DEBUG: Optimize header={} err={} itime={} gain=[{},{}] offset=[{},{}] leftover_bytes={} elapsed={:.3f}s".format(
+            header,
+            errbyte,
+            itime,
+            gain1,
+            gain2,
+            offset1,
+            offset2,
+            len(leftover),
+            time.time() - t0,
+        )
+    )
     if header != 100:
         print("PROBLEMS IN OPTIMISATION")
         print(header, errbyte, itime, gain1, gain2, offset1, offset2)
@@ -164,10 +187,17 @@ def SetOpt(s, itime, gain, offset):
         try:
             dummydata = s.recv(20)
         except Exception as exc:
-            print("DEBUG: SetOpt {} recv error {}: {}".format(label, type(exc).__name__, exc))
+            print(
+                "DEBUG: SetOpt {} recv error {}: {}".format(
+                    label, type(exc).__name__, exc
+                )
+            )
             raise
-        print("DEBUG: SetOpt {} recv len={} bytes={!r}".format(
-            label, len(dummydata), dummydata[:32]))
+        print(
+            "DEBUG: SetOpt {} recv len={} bytes={!r}".format(
+                label, len(dummydata), dummydata[:32]
+            )
+        )
     print("DEBUG: SetOpt done elapsed={:.3f}s".format(time.time() - t0))
 
 
@@ -209,24 +239,33 @@ def VNIRinfo(s):
     data = recvall(s, 50, label="VNIRinfo.start_wl")
     name = str(30)
     header, errbyte, name, Vwl1, count = unpack(">ii30sdi", data[:50])
-    print("DEBUG: VNIRinfo start_wl header={} err={} Vwl1={} count={}".format(
-        header, errbyte, Vwl1, count))
+    print(
+        "DEBUG: VNIRinfo start_wl header={} err={} Vwl1={} count={}".format(
+            header, errbyte, Vwl1, count
+        )
+    )
 
     print("DEBUG: VNIRinfo send b'INIT,0,VDarkCurrentCorrection'")
     s.sendall(b"INIT,0,VDarkCurrentCorrection")
     data = recvall(s, 50, label="VNIRinfo.vdcc")
     name = str(30)
     header, errbyte, name, VDCC, count = unpack(">ii30sdi", data[:50])
-    print("DEBUG: VNIRinfo vdcc header={} err={} VDCC={} count={}".format(
-        header, errbyte, VDCC, count))
+    print(
+        "DEBUG: VNIRinfo vdcc header={} err={} VDCC={} count={}".format(
+            header, errbyte, VDCC, count
+        )
+    )
 
     print("DEBUG: VNIRinfo send b'INIT,0,VEndingWavelength'")
     s.sendall(b"INIT,0,VEndingWavelength")
     data = recvall(s, 50, label="VNIRinfo.end_wl")
     name = str(30)
     header, errbyte, name, Vwl2, count = unpack(">ii30sdi", data[:50])
-    print("DEBUG: VNIRinfo end_wl header={} err={} Vwl2={} count={}".format(
-        header, errbyte, Vwl2, count))
+    print(
+        "DEBUG: VNIRinfo end_wl header={} err={} Vwl2={} count={}".format(
+            header, errbyte, Vwl2, count
+        )
+    )
     print(Vwl1, Vwl2, VDCC)
     return Vwl1, Vwl2, VDCC
 
@@ -253,8 +292,11 @@ def ReadASD1(s, count):
     # command under-consumed its reply, those bytes would otherwise satisfy
     # part of our recv loop and the parsed spectrum would be garbage.
     pre_leftover = peek_socket(s, label="ReadASD1.pre-send")
-    print("DEBUG: ReadASD1 send {!r} expecting {} bytes timeout={} pre_leftover={}".format(
-        com, expected, s.gettimeout(), len(pre_leftover)))
+    print(
+        "DEBUG: ReadASD1 send {!r} expecting {} bytes timeout={} pre_leftover={}".format(
+            com, expected, s.gettimeout(), len(pre_leftover)
+        )
+    )
     s.sendall(com)
     l0 = 0
     datd = []
@@ -268,16 +310,30 @@ def ReadASD1(s, count):
             # at all; this almost always means the firmware silently rejected
             # the command form or is in a state where it will not respond.
             # Log the socket state so the next debug session can tell which.
-            print("DEBUG: ReadASD1 recv error after {} of {} bytes chunks={} first_byte_at={} elapsed={:.3f}s {}: {}".format(
-                l0, expected, chunks,
-                "{:.3f}s".format(first_byte_at) if first_byte_at is not None else "never",
-                time.time() - t0, type(exc).__name__, exc))
+            print(
+                "DEBUG: ReadASD1 recv error after {} of {} bytes chunks={} first_byte_at={} elapsed={:.3f}s {}: {}".format(
+                    l0,
+                    expected,
+                    chunks,
+                    (
+                        "{:.3f}s".format(first_byte_at)
+                        if first_byte_at is not None
+                        else "never"
+                    ),
+                    time.time() - t0,
+                    type(exc).__name__,
+                    exc,
+                )
+            )
             raise
         chunks += 1
         ln = len(data)
         if ln == 0:
-            print("DEBUG: ReadASD1 EOF after {} of {} bytes chunks={} elapsed={:.3f}s".format(
-                l0, expected, chunks, time.time() - t0))
+            print(
+                "DEBUG: ReadASD1 EOF after {} of {} bytes chunks={} elapsed={:.3f}s".format(
+                    l0, expected, chunks, time.time() - t0
+                )
+            )
             raise ConnectionError(
                 "Spectrometer closed during ReadASD1 ({} of {} bytes)".format(
                     l0, expected
@@ -285,17 +341,28 @@ def ReadASD1(s, count):
             )
         if first_byte_at is None:
             first_byte_at = time.time() - t0
-            print("DEBUG: ReadASD1 first-byte after {:.3f}s chunk_len={}".format(
-                first_byte_at, ln))
+            print(
+                "DEBUG: ReadASD1 first-byte after {:.3f}s chunk_len={}".format(
+                    first_byte_at, ln
+                )
+            )
         datd.append(data)
         l0 += ln
     datc = b"".join(datd)
     header = unpack(">64i", datc[:256])
     spectrum = np.array(unpack(">2151f", datc[256 : 256 + 8604]))
-    print("DEBUG: ReadASD1 done bytes={} chunks={} first_byte_at={:.3f}s elapsed={:.3f}s header[0]={} drift(header[22])={} sample[0]={:.1f} sample[-1]={:.1f}".format(
-        l0, chunks, first_byte_at if first_byte_at is not None else -1.0,
-        time.time() - t0, header[0], header[22],
-        float(spectrum[0]), float(spectrum[-1])))
+    print(
+        "DEBUG: ReadASD1 done bytes={} chunks={} first_byte_at={:.3f}s elapsed={:.3f}s header[0]={} drift(header[22])={} sample[0]={:.1f} sample[-1]={:.1f}".format(
+            l0,
+            chunks,
+            first_byte_at if first_byte_at is not None else -1.0,
+            time.time() - t0,
+            header[0],
+            header[22],
+            float(spectrum[0]),
+            float(spectrum[-1]),
+        )
+    )
     return header, spectrum
 
 
@@ -306,8 +373,11 @@ def ReadASD(s):
     datc = recvall(s, Nwl * 4 + 256, label="ReadASD")
     header = unpack(">64i", datc[:256])
     spectrum = np.array(unpack(">2151f", datc[256 : 256 + 8604]))
-    print("DEBUG: ReadASD done elapsed={:.3f}s header[0]={} drift={}".format(
-        time.time() - t0, header[0], header[22]))
+    print(
+        "DEBUG: ReadASD done elapsed={:.3f}s header[0]={} drift={}".format(
+            time.time() - t0, header[0], header[22]
+        )
+    )
     return header, spectrum
 
 
@@ -338,7 +408,11 @@ def NOTReadASD0(s, count):
 
 
 def Restore(s):
-    print("DEBUG: Restore send b'RESTORE,1' expecting >=7616 bytes timeout={}".format(s.gettimeout()))
+    print(
+        "DEBUG: Restore send b'RESTORE,1' expecting >=7616 bytes timeout={}".format(
+            s.gettimeout()
+        )
+    )
     t0 = time.time()
     s.sendall(b"RESTORE,1")
     nb = 0
@@ -347,19 +421,28 @@ def Restore(s):
         try:
             data = s.recv(1024)
         except Exception as exc:
-            print("DEBUG: Restore recv error after {} bytes chunks={} elapsed={:.3f}s {}: {}".format(
-                nb, chunks, time.time() - t0, type(exc).__name__, exc))
+            print(
+                "DEBUG: Restore recv error after {} bytes chunks={} elapsed={:.3f}s {}: {}".format(
+                    nb, chunks, time.time() - t0, type(exc).__name__, exc
+                )
+            )
             raise
         if not data:
-            print("DEBUG: Restore EOF after {} bytes chunks={} elapsed={:.3f}s".format(
-                nb, chunks, time.time() - t0))
+            print(
+                "DEBUG: Restore EOF after {} bytes chunks={} elapsed={:.3f}s".format(
+                    nb, chunks, time.time() - t0
+                )
+            )
             raise ConnectionError("Spectrometer closed during Restore")
         chunks += 1
         nb += len(data)
         if nb >= 7616:
             break
-    print("DEBUG: Restore done bytes={} chunks={} elapsed={:.3f}s".format(
-        nb, chunks, time.time() - t0))
+    print(
+        "DEBUG: Restore done bytes={} chunks={} elapsed={:.3f}s".format(
+            nb, chunks, time.time() - t0
+        )
+    )
 
 
 class datastruct:
