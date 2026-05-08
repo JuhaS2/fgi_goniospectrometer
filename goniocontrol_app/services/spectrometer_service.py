@@ -45,7 +45,7 @@ class SpectrometerService:
         self._trace(op, "wait-lock")
         self._lock.acquire()
         wait_s = time.time() - t0
-        if wait_s > 0.001:
+        #if wait_s > 0.001:
             # print("DEBUG: SpectrometerService[{}] {} got-lock wait={:.3f}s".format(
                 # thread, op, wait_s))
         return _LockHandle(self._lock, op, thread)
@@ -330,7 +330,9 @@ class _LockHandle:
         if exc_type is None:
             # print("DEBUG: SpectrometerService[{}] {} release".format(
                 # self._thread, self._op))
+            pass
         else:
             # print("DEBUG: SpectrometerService[{}] {} release-after-error {}: {}".format(
                 # self._thread, self._op, exc_type.__name__, exc))
+            pass
         return False
