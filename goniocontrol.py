@@ -273,26 +273,14 @@ class GoniocontrolGUI(tk.Tk):
         live_frame = ttk.LabelFrame(frm, text="Live spectrum")
         live_frame.grid(row=0, column=1, sticky="nsew", padx=2, pady=0)
 
-        meta_row = ttk.Frame(live_frame)
-        meta_row.pack(fill=tk.X, padx=4, pady=(4, 2))
-        ttk.Label(meta_row, text="Source:").pack(side=tk.LEFT)
-        ttk.Label(meta_row, textvariable=self.live_source_var).pack(
-            side=tk.LEFT, padx=(4, 12)
-        )
-        ttk.Label(meta_row, text="Timestamp:").pack(side=tk.LEFT)
-        ttk.Label(meta_row, textvariable=self.live_timestamp_var).pack(
-            side=tk.LEFT, padx=(4, 0)
-        )
-
         mode_row = ttk.Frame(live_frame)
-        mode_row.pack(fill=tk.X, padx=4, pady=(0, 2))
-        ttk.Label(mode_row, text="View:").pack(side=tk.LEFT)
+        mode_row.pack(fill=tk.X, padx=4, pady=(4, 2))
         ttk.Radiobutton(
             mode_row,
             text="DN",
             value="dn",
             variable=self.live_view_mode_var,
-        ).pack(side=tk.LEFT, padx=(8, 8))
+        ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Radiobutton(
             mode_row,
             text="Radiance",
@@ -1144,10 +1132,15 @@ class GoniocontrolGUI(tk.Tk):
                         p99 = float(np.percentile(finite, 99))
                         ymax = min(5.0, math.ceil((p99 + 0.1) * 10.0) / 10.0)
                         ymax = max(0.1, ymax)
+                        self._live_ax.set_autoscaley_on(False)
                         self._live_ax.set_ylim(-0.05, ymax)
                     else:
+                        self._live_ax.set_autoscaley_on(True)
+                        self._live_ax.set_ylim(auto=True)
                         self._live_ax.autoscale_view()
                 else:
+                    self._live_ax.set_autoscaley_on(True)
+                    self._live_ax.set_ylim(auto=True)
                     self._live_ax.autoscale_view()
                 self.live_canvas.draw_idle()
                 self._live_last_seq = seq
