@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
+from typing import List, Tuple
 import struct
 from abc import ABC, abstractmethod
 import re
@@ -63,7 +63,9 @@ class SpectrumHeader: # 64 bytes
 @dataclass
 class FRInterpSpec(CommandOutput):
     fr_spectrum_header: SpectrumHeader
-    spec_buffer: List[float] # len 2151
+    spec_buffer: List[float]  # len 2151
+    # Same 64 big-endian ints as legacy ReadASD1 ``unpack(">64i", header256)``.
+    legacy_64i: Tuple[int, ...] = field(default_factory=tuple)
 
     def to_npl_format(self):
         drift = self.fr_spectrum_header.v_header.drift
@@ -169,7 +171,24 @@ def create_FRInterpSpec(data: bytes) -> FRInterpSpec:
     s2_header = SwirHeader(*[*header_ints[48:61], header_ints[61:]])
     header_params = [*header_ints[:12], header_ints[12:16], v_header, s1_header, s2_header]
     header = SpectrumHeader(*header_params)
-    return FRInterpSpec(header, spec_buffer)
+    return FRInterpSpec(header, spec_buffer, tuple(header_ints))
+
+
+def itime_int_to_enum(itime: int) -> "ITimeEnum":
+    for member in ITimeEnum:
+        if member.value == itime:
+            return member
+    raise ValueError("Unsupported integration time index: {}".format(itime))
+
+
+def frinterp_to_legacy_header_and_spectrum(spec: FRInterpSpec):
+    """Return (64-int header tuple, spectrum ndarray) compatible with ASDlib ReadASD1."""
+    import numpy as np
+
+    hdr = spec.legacy_64i
+    if len(hdr) != 64:
+        raise ValueError("Expected legacy_64i length 64, got {}".format(len(hdr)))
+    return hdr, np.array(spec.spec_buffer, dtype=np.float64)
 
 def create_OptimizeStruct(data: bytes) -> OptimizeStruct:
     vals = []
@@ -204,7 +223,9 @@ def create_InitStruct(data: bytes) -> InitStruct:
 
 def create_IC(data: bytes) -> InstrumentControlStruct:
     vals = []
-    for i in range(0, len(data)-3, 4):
-        val = struct.unpack('!i', data[i:i+4])[0]
+    for i in range(0, min(len(data), 20), 4):
+        val = struct.unpack("!i", data[i : i + 4])[0]
         vals.append(val)
-    return InstrumentControlStruct(*vals)
+    while len(vals) < 5:
+        vals.append(0)
+    return InstrumentControlStruct(*vals[:5])

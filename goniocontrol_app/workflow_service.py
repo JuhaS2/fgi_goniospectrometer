@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 try:
-    from ASDlib import (
+    from spectrum_math_utils import (
         MakeAA3,
         MakeAA44,
         MakeI,

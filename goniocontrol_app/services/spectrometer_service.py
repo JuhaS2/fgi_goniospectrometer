@@ -1,21 +1,22 @@
 import socket
 import threading
 import time
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 
-from ASDlib import Optimize, ReadASD, ReadASD1, Restore, SetOpt, VNIRinfo
+from asdcontroller.asd_controller import ASDController
+from asdcontroller.asd_types import frinterp_to_legacy_header_and_spectrum
 
 
 class SpectrometerService:
-    """Thin wrapper around the ASD TCP socket.
+    """Thin wrapper around ``ASDController`` (ASD TCP protocol).
 
-    All public methods that touch ``self.socket`` are serialized through
+    All public methods that touch the controller are serialized through
     ``self._lock``. The ASD speaks a single byte stream; concurrent senders
     or receivers would interleave commands and corrupt response framing.
     A reentrant lock lets a single thread compose higher-level operations
-    (e.g. SetOpt followed by ReadASD1) without self-deadlock.
+    without self-deadlock.
     """
 
     def __init__(
@@ -27,12 +28,10 @@ class SpectrometerService:
         self.host = host
         self.port = port
         self.default_timeout_s = default_timeout_s
-        self.socket: Optional[socket.socket] = None
+        self._controller: Optional[ASDController] = None
+        # Backward compatibility: truthy when a link exists (tests / old code).
+        self.socket = None
         self._lock = threading.RLock()
-        # Set when a hard transport error (broken pipe / connection reset)
-        # invalidates ``self.socket``. Read paths check this flag before they
-        # touch the socket and trigger a reconnect instead of issuing a send
-        # that would otherwise raise BrokenPipeError forever.
         self._needs_reconnect = False
 
     def _trace(self, op: str, msg: str = ""):
@@ -51,102 +50,77 @@ class SpectrometerService:
                 thread, op, wait_s))
         return _LockHandle(self._lock, op, thread)
 
+    def _dispose_controller(self):
+        if self._controller is not None:
+            try:
+                self._controller.close()
+            except Exception as exc:
+                self._trace("_dispose_controller", "{}: {}".format(type(exc).__name__, exc))
+            self._controller = None
+        self.socket = None
+
     def connect(self):
         with self._locked("connect"):
             self._trace("connect", "host={} port={}".format(self.host, self.port))
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.connect((self.host, self.port))
-            if self.default_timeout_s is not None:
-                sock.settimeout(self.default_timeout_s)
-            self.socket = sock
+            self._dispose_controller()
             self._needs_reconnect = False
-            greeting = sock.recv(128)
-            self._trace("connect", "greeting len={} bytes={!r}".format(
-                len(greeting), greeting[:64]))
+            try:
+                self._controller = ASDController(
+                    ip=self.host,
+                    port=self.port,
+                    default_sock_timeout_s=self.default_timeout_s,
+                )
+            except Exception as exc:
+                self._dispose_controller()
+                raise
+            self.socket = self._controller
+            greeting = b"ASD"
+            self._trace("connect", "controller ok")
             return greeting
 
     def reconnect(self):
-        """Tear down the existing socket (if any) and dial a fresh one.
-
-        Used by callers that have observed a transport-level failure and
-        want subsequent operations to succeed once the spectrometer is
-        responsive again. Returns the greeting bytes from the new socket.
-        Caller is responsible for retrying any in-flight workflow.
-        """
+        """Tear down the existing controller and dial a fresh one."""
         with self._locked("reconnect"):
-            old = self.socket
-            self.socket = None
+            self._trace("reconnect", "host={} port={}".format(self.host, self.port))
+            self._dispose_controller()
             self._needs_reconnect = False
-            if old is not None:
-                try:
-                    old.shutdown(socket.SHUT_RDWR)
-                except OSError as exc:
-                    self._trace("reconnect", "shutdown skipped {}: {}".format(
-                        type(exc).__name__, exc))
-                try:
-                    old.close()
-                except OSError as exc:
-                    self._trace("reconnect", "close skipped {}: {}".format(
-                        type(exc).__name__, exc))
-            self._trace("reconnect", "dialing host={} port={}".format(
-                self.host, self.port))
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.connect((self.host, self.port))
-            if self.default_timeout_s is not None:
-                sock.settimeout(self.default_timeout_s)
-            self.socket = sock
-            greeting = sock.recv(128)
-            self._trace("reconnect", "greeting len={} bytes={!r}".format(
-                len(greeting), greeting[:64]))
+            try:
+                self._controller = ASDController(
+                    ip=self.host,
+                    port=self.port,
+                    default_sock_timeout_s=self.default_timeout_s,
+                )
+            except Exception as exc:
+                self._dispose_controller()
+                raise
+            self.socket = self._controller
+            greeting = b"ASD"
+            self._trace("reconnect", "controller ok")
             return greeting
 
     def needs_reconnect(self) -> bool:
-        return self._needs_reconnect or self.socket is None
+        return self._needs_reconnect or self._controller is None
 
     def close(self):
-        sock = self.socket
-        if sock is None:
-            self._trace("close", "no-socket")
-            return
         self._trace("close", "begin")
-        # Try to wait briefly so we don't tear down a live transaction; if a
-        # peer thread is stuck in recv, fall through and force-close anyway.
         acquired = self._lock.acquire(timeout=2.0)
         try:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-                self._trace("close", "shutdown ok")
-            except OSError as exc:
-                self._trace("close", "shutdown skipped {}: {}".format(
-                    type(exc).__name__, exc))
-            try:
-                sock.close()
-                self._trace("close", "closed acquired_lock={}".format(acquired))
-            finally:
-                self.socket = None
+            self._dispose_controller()
+            self._needs_reconnect = False
+            self._trace("close", "done acquired_lock={}".format(acquired))
         finally:
             if acquired:
                 self._lock.release()
 
-    def _s(self):
-        if self.socket is None or self._needs_reconnect:
+    def _ctrl(self) -> ASDController:
+        if self._controller is None or self._needs_reconnect:
             raise ConnectionError(
                 "Spectrometer link is down (needs reconnect={}).".format(
                     self._needs_reconnect
                 )
             )
-        return self.socket
+        return self._controller
 
-    # Errors that indicate the TCP connection is unusable and a fresh
-    # ``reconnect()`` is required before the next command can succeed.
-    # ``socket.timeout`` is included because, empirically, the ASD's TCP
-    # server resets the connection after a long recv stall, which means any
-    # operation after a recv timeout will fail with BrokenPipeError until
-    # we reconnect. Treating the timeout itself as fatal-to-the-link lets
-    # the next attempt rebuild the socket immediately instead of wasting
-    # 30 more seconds on a doomed retry.
     _TRANSPORT_DEAD_EXCEPTIONS = (
         BrokenPipeError,
         ConnectionResetError,
@@ -167,10 +141,20 @@ class SpectrometerService:
                 )
             self._needs_reconnect = True
 
+    def _optimize_tuple(self, ctrl: ASDController):
+        opt = ctrl.optimize()
+        return (
+            opt.header,
+            opt.errbyte,
+            opt.itime,
+            [opt.gain_1, opt.gain_2],
+            [opt.offset_1, opt.offset_2],
+        )
+
     def restore(self):
         with self._locked("restore"):
             try:
-                Restore(self._s())
+                self._ctrl().restore()
             except Exception as exc:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("restore", "FAILED {}: {}".format(type(exc).__name__, exc))
@@ -180,7 +164,7 @@ class SpectrometerService:
         with self._locked("optimize"):
             t0 = time.time()
             try:
-                result = Optimize(self._s())
+                result = self._optimize_tuple(self._ctrl())
             except Exception as exc:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("optimize", "FAILED {}: {}".format(type(exc).__name__, exc))
@@ -192,29 +176,27 @@ class SpectrometerService:
     def set_opt(self, itime, gain, offset):
         with self._locked("set_opt"):
             try:
-                SetOpt(self._s(), itime, gain, offset)
+                g: List[int] = list(gain) if not isinstance(gain, list) else gain
+                o: List[int] = list(offset) if not isinstance(offset, list) else offset
+                self._ctrl().apply_set_opt(int(itime), g, o)
             except Exception as exc:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("set_opt", "FAILED {}: {}".format(type(exc).__name__, exc))
                 raise
 
     def read_single(self):
-        # Match the old no-polarizer CLI path: TakeI(s) -> ReadASD1(s, 1).
-        # Retry once on a fresh socket, then fall back to legacy ``b"A"``.
         with self._locked("read_single"):
             t0 = time.time()
             attempts = (
-                ("A,1,1", lambda: ReadASD1(self._s(), 1)),
-                ("A,1,1 retry", lambda: ReadASD1(self._s(), 1)),
-                ("legacy A", lambda: ReadASD(self._s())),
+                ("A,1,1", lambda: frinterp_to_legacy_header_and_spectrum(
+                    self._ctrl().acquire(1))),
+                ("A,1,1 retry", lambda: frinterp_to_legacy_header_and_spectrum(
+                    self._ctrl().acquire(1))),
             )
             last_exc = None
             for idx, (label, reader) in enumerate(attempts):
                 if idx > 0:
-                    self._trace(
-                        "read_single",
-                        "{} after reconnect".format(label),
-                    )
+                    self._trace("read_single", "{} after reconnect".format(label))
                     self.reconnect()
                 try:
                     result = reader()
@@ -223,9 +205,7 @@ class SpectrometerService:
                     last_exc = exc
                     self._trace(
                         "read_single",
-                        "{} timed out after {:.3f}s".format(
-                            label, time.time() - t0
-                        ),
+                        "{} timed out after {:.3f}s".format(label, time.time() - t0),
                     )
                     continue
                 except Exception as exc:
@@ -261,23 +241,11 @@ class SpectrometerService:
         with self._locked("read_average({})".format(repeats)):
             t0 = time.time()
             count = max(1, int(repeats))
-
-            def repeated_legacy_read():
-                spectra = []
-                header = None
-                for _ in range(count):
-                    header, spectrum = ReadASD(self._s())
-                    spectra.append(spectrum)
-                if len(spectra) == 1:
-                    avg = spectra[0]
-                else:
-                    avg = np.mean(np.stack(spectra, axis=0), axis=0)
-                return header, avg
-
             attempts = (
-                ("A,1,{}".format(count), lambda: ReadASD1(self._s(), count)),
-                ("A,1,{} retry".format(count), lambda: ReadASD1(self._s(), count)),
-                ("{}x legacy A".format(count), repeated_legacy_read),
+                ("A,1,{}".format(count), lambda: frinterp_to_legacy_header_and_spectrum(
+                    self._ctrl().acquire(count))),
+                ("A,1,{} retry".format(count), lambda: frinterp_to_legacy_header_and_spectrum(
+                    self._ctrl().acquire(count))),
             )
             last_exc = None
             for idx, (label, reader) in enumerate(attempts):
@@ -333,7 +301,7 @@ class SpectrometerService:
         with self._locked("vnir_info"):
             t0 = time.time()
             try:
-                result = VNIRinfo(self._s())
+                result = self._ctrl().vnir_info()
             except Exception as exc:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("vnir_info", "FAILED {}: {} elapsed={:.3f}s".format(
