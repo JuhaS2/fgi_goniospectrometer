@@ -1127,7 +1127,18 @@ class GoniocontrolGUI(tk.Tk):
                 self.live_plot_status_var.set(status)
                 self._live_ax.relim()
                 if mode == "reflectance" and y_live is not None:
-                    finite = np.asarray(y_live, dtype=float)
+                    reflectance = np.asarray(y_live, dtype=float).reshape(-1)
+                    if wl is not None and len(wl) == len(reflectance):
+                        wl_arr = np.asarray(wl, dtype=float)
+                        analysis_mask = (wl_arr >= 500.0) & (wl_arr <= 2000.0)
+                    else:
+                        # Fallback for expected ASD grid (350..2500 nm, len=2151):
+                        # use indices ~150..1650 => ~500..2000 nm.
+                        analysis_mask = np.zeros(reflectance.shape[0], dtype=bool)
+                        i0 = max(0, 500 - 350)
+                        i1 = min(reflectance.shape[0], 2000 - 350 + 1)
+                        analysis_mask[i0:i1] = True
+                    finite = reflectance[analysis_mask]
                     finite = finite[np.isfinite(finite)]
                     if finite.size > 0:
                         p99 = float(np.percentile(finite, 99))
