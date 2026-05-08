@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -55,6 +56,8 @@ ShouldCancelFn = Callable[[], bool]
 
 
 class WorkflowService:
+    _CALIBRATION_MAX_AGE = timedelta(hours=10)
+
     MOTOR_STEP_SCALE = 100.0
 
     def __init__(
@@ -247,6 +250,10 @@ class WorkflowService:
             "DC_remainder.npy"
         )
         self._load_polarization_calibration()
+        timestamps = self.persistence.load_calibration_timestamps()
+        self.state.calibration.dark_collected_at = timestamps.get("dark_collected_at")
+        self.state.calibration.white_collected_at = timestamps.get("white_collected_at")
+        self._invalidate_stale_calibrations()
 
         hdr = self.state.calibration.optimizer_header
         if hdr is not None:
@@ -333,8 +340,14 @@ class WorkflowService:
         self.state.calibration.ending_white = None
         self.state.calibration.wr_zenith = None
         self.state.calibration.wr_end_zenith = None
+        self.state.calibration.dark_collected_at = None
+        self.state.calibration.white_collected_at = None
         self.persistence.save_array(
             "Oheader.npy", self.state.calibration.optimizer_header
+        )
+        self.persistence.save_calibration_timestamps(
+            self.state.calibration.dark_collected_at,
+            self.state.calibration.white_collected_at,
         )
 
     def auto_optimize_on_startup(self, progress=None):
@@ -414,9 +427,14 @@ class WorkflowService:
         self.state.calibration.dark_current = dc
         self.state.calibration.drift_dark = drift
         self.state.calibration.dark_remainder = dc_remainder
+        self.state.calibration.dark_collected_at = datetime.now()
         self.persistence.save_array("DC.npy", dc)
         self.persistence.save_array("DriftDC.npy", drift)
         self.persistence.save_array("DC_remainder.npy", dc_remainder)
+        self.persistence.save_calibration_timestamps(
+            self.state.calibration.dark_collected_at,
+            self.state.calibration.white_collected_at,
+        )
 
     def collect_white(self, wr_zenith):
         self._require_dark()
@@ -448,7 +466,12 @@ class WorkflowService:
         else:
             raise PreconditionError("Unsupported polarization mode.")
         self.state.calibration.wr_zenith = wr_zenith
+        self.state.calibration.white_collected_at = datetime.now()
         self.persistence.save_array("WRZA.npy", wr_zenith)
+        self.persistence.save_calibration_timestamps(
+            self.state.calibration.dark_collected_at,
+            self.state.calibration.white_collected_at,
+        )
 
     def collect_ending_white(self, wr_zenith):
         self._require_white()
@@ -718,6 +741,34 @@ class WorkflowService:
             raise CalibrationMissingError("Oheader.npy not loaded. Run optimize first.")
         if not self.state.angles:
             raise PreconditionError("Angle list is empty.")
+
+    def _invalidate_stale_calibrations(self):
+        now = datetime.now()
+        calibration = self.state.calibration
+        stale_dark = (
+            calibration.dark_collected_at is not None
+            and (now - calibration.dark_collected_at) > self._CALIBRATION_MAX_AGE
+        )
+        stale_white = (
+            calibration.white_collected_at is not None
+            and (now - calibration.white_collected_at) > self._CALIBRATION_MAX_AGE
+        )
+
+        if stale_dark:
+            calibration.dark_current = None
+            calibration.drift_dark = None
+            calibration.dark_remainder = None
+            calibration.dark_collected_at = None
+        if stale_white:
+            calibration.white = None
+            calibration.aa = None
+            calibration.wr_zenith = None
+            calibration.white_collected_at = None
+        if stale_dark or stale_white:
+            self.persistence.save_calibration_timestamps(
+                calibration.dark_collected_at,
+                calibration.white_collected_at,
+            )
 
     def _require_dark(self):
         if (

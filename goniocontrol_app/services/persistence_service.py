@@ -2,6 +2,7 @@ import json
 import pickle
 import shutil
 import sys
+from datetime import datetime
 from os import environ
 from pathlib import Path
 from typing import Any, Dict, List
@@ -114,6 +115,44 @@ class PersistenceService:
 
     def save_array(self, filename, data):
         np.save(self._state_path(filename), data)
+
+    def load_calibration_timestamps(self):
+        defaults = {"dark_collected_at": None, "white_collected_at": None}
+        path = self._state_path("calibration_timestamps.json")
+        if not path.exists():
+            return defaults
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return defaults
+        if not isinstance(data, dict):
+            return defaults
+
+        out = dict(defaults)
+        for key in out:
+            raw = data.get(key)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                out[key] = datetime.fromisoformat(raw)
+            except ValueError:
+                continue
+        return out
+
+    def save_calibration_timestamps(self, dark_collected_at, white_collected_at):
+        payload = {
+            "dark_collected_at": (
+                dark_collected_at.isoformat() if dark_collected_at is not None else None
+            ),
+            "white_collected_at": (
+                white_collected_at.isoformat()
+                if white_collected_at is not None
+                else None
+            ),
+        }
+        self._state_path("calibration_timestamps.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
 
     def load_outfile_name(self, default= "Test00"):
         path = self._state_path("outfile.txt")

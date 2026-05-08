@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,6 +36,8 @@ class CalibrationState:
     wr_zenith: Any = None
     wr_end_zenith: Any = None
     optimizer_header: Any = None
+    dark_collected_at: Optional[datetime] = None
+    white_collected_at: Optional[datetime] = None
 
 
 @dataclass

@@ -633,6 +633,20 @@ class GoniocontrolGUI(tk.Tk):
         self.save_format_var.set(
             "reflectance" if self.state_obj.reflectance_mode else "radiance"
         )
+        self._dark_collected_at = self.state_obj.calibration.dark_collected_at
+        self._white_collected_at = self.state_obj.calibration.white_collected_at
+        if self._dark_collected_at is None:
+            self.dark_last_measured_var.set("Not collected yet!")
+        else:
+            self.dark_last_measured_var.set(
+                self._format_collection_status(self._dark_collected_at)
+            )
+        if self._white_collected_at is None:
+            self.white_last_measured_var.set("Not collected yet!")
+        else:
+            self.white_last_measured_var.set(
+                self._format_collection_status(self._white_collected_at)
+            )
 
     def _format_optimize_status(self, header):
         if header is None:
@@ -806,7 +820,7 @@ class GoniocontrolGUI(tk.Tk):
 
         def run():
             self.workflow.collect_dark()
-            collected_at = datetime.now()
+            collected_at = self.state_obj.calibration.dark_collected_at or datetime.now()
             self._dark_collected_at = collected_at
             self.after(
                 0,
@@ -835,7 +849,9 @@ class GoniocontrolGUI(tk.Tk):
         def run():
             za = float(self.sensor_zenith_var.get() or "0")
             self.workflow.collect_white(za)
-            collected_at = datetime.now()
+            collected_at = (
+                self.state_obj.calibration.white_collected_at or datetime.now()
+            )
             self._white_collected_at = collected_at
             self.after(
                 0,
