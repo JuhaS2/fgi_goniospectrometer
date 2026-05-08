@@ -731,6 +731,71 @@ class WorkflowService:
             return 0.0
         return self.state.calibration.dark_remainder
 
+    def compute_live_dn_pair(self, spectrum):
+        if spectrum is None:
+            return None, None, "No live spectrum available."
+        dn = np.asarray(spectrum, dtype=float).reshape(-1)
+        dark = self._dc()
+        if dark is None:
+            return dn, None, "Dark current not available."
+        dark_arr = np.asarray(dark, dtype=float).reshape(-1)
+        if dark_arr.shape[0] != dn.shape[0]:
+            return dn, None, "Dark current length mismatch."
+        return dn, dark_arr, ""
+
+    def _live_subdata(self, header, spectrum):
+        if spectrum is None:
+            return None, None, "No live spectrum available."
+        if header is None or len(header) <= 22:
+            return None, None, "Live header missing drift value."
+        drift_meas = header[22]
+        spec = np.asarray(spectrum, dtype=float).reshape(-1)
+        return [(0.0, 0.0, spec, drift_meas)], spec, ""
+
+    def compute_live_radiance_pair(self, header, spectrum):
+        dark = self._dc()
+        drift_dark = self._drift()
+        vdcc = getattr(self, "_vdcc", 0.0)
+        if dark is None or drift_dark is None:
+            return None, None, "Dark current not available."
+        subdata, spec, status = self._live_subdata(header, spectrum)
+        if subdata is None:
+            return None, None, status
+        radiance = MakeI(subdata, dark, drift_dark, vdcc) - self._dc_remainder()
+        radiance = np.asarray(radiance, dtype=float).reshape(-1)
+        if radiance.shape[0] != spec.shape[0]:
+            return None, None, "Radiance conversion length mismatch."
+
+        white = self.state.calibration.white
+        if white is None:
+            return radiance, None, "White reference not available."
+        white_arr = np.asarray(white, dtype=float)
+        if white_arr.ndim != 2 or white_arr.shape[1] != spec.shape[0]:
+            return radiance, None, "White reference not available for this mode."
+        return radiance, white_arr[0, :], ""
+
+    def compute_live_reflectance(self, header, spectrum):
+        dark = self._dc()
+        drift_dark = self._drift()
+        vdcc = getattr(self, "_vdcc", 0.0)
+        if dark is None or drift_dark is None:
+            return None, "Dark current not available."
+        white = self.state.calibration.white
+        if white is None:
+            return None, "White reference not available."
+        subdata, spec, status = self._live_subdata(header, spectrum)
+        if subdata is None:
+            return None, status
+        radiance = MakeI(subdata, dark, drift_dark, vdcc) - self._dc_remainder()
+        radiance = np.asarray(radiance, dtype=float)
+        white_arr = np.asarray(white, dtype=float)
+        if radiance.ndim != 2 or white_arr.ndim != 2:
+            return None, "Reflectance mode expects unpolarized white reference."
+        if radiance.shape[1] != spec.shape[0] or white_arr.shape[1] != spec.shape[0]:
+            return None, "White reference length mismatch."
+        reflectance = MakeRef(radiance, white_arr)
+        return np.asarray(reflectance[0, :], dtype=float), ""
+
     def _apply_opt(self):
         hdr = self.state.calibration.optimizer_header
         self.spectrometer.set_opt(hdr[2], hdr[3], hdr[4])

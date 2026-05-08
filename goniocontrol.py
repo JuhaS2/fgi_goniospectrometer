@@ -120,8 +120,11 @@ class GoniocontrolGUI(tk.Tk):
         self.motor_zero_buttons = {}
         self.live_source_var = tk.StringVar(value="none")
         self.live_timestamp_var = tk.StringVar(value="n/a")
+        self.live_view_mode_var = tk.StringVar(value="dn")
+        self.live_plot_status_var = tk.StringVar(value="")
         self._live_last_seq = -1
-        self._live_line = None
+        self._live_fg_line = None
+        self._live_bg_line = None
         self._dark_collected_at = None
         self._white_collected_at = None
 
@@ -279,6 +282,34 @@ class GoniocontrolGUI(tk.Tk):
         ttk.Label(meta_row, textvariable=self.live_timestamp_var).pack(
             side=tk.LEFT, padx=(4, 0)
         )
+
+        mode_row = ttk.Frame(live_frame)
+        mode_row.pack(fill=tk.X, padx=4, pady=(0, 2))
+        ttk.Label(mode_row, text="View:").pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            mode_row,
+            text="DN",
+            value="dn",
+            variable=self.live_view_mode_var,
+        ).pack(side=tk.LEFT, padx=(8, 8))
+        ttk.Radiobutton(
+            mode_row,
+            text="Radiance",
+            value="radiance",
+            variable=self.live_view_mode_var,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Radiobutton(
+            mode_row,
+            text="Reflectance",
+            value="reflectance",
+            variable=self.live_view_mode_var,
+        ).pack(side=tk.LEFT)
+
+        ttk.Label(
+            live_frame,
+            textvariable=self.live_plot_status_var,
+            font=self.angles_status_font,
+        ).pack(fill=tk.X, padx=4, pady=(0, 2))
 
         self.live_figure = Figure(figsize=(7.2, 2.5), dpi=100)
         ax = self.live_figure.add_subplot(111)
@@ -1033,10 +1064,66 @@ class GoniocontrolGUI(tk.Tk):
                 wl = getattr(self.workflow, "_wl", None)
                 if wl is None or len(wl) != len(spectrum):
                     wl = np.arange(len(spectrum))
-                if self._live_line is None:
-                    (self._live_line,) = self._live_ax.plot(wl, spectrum)
+                mode = self.live_view_mode_var.get()
+                header = latest.get("header")
+                y_live = None
+                y_overlay = None
+                ylabel = "DN"
+                status = ""
+                overlay_label = None
+                if mode == "dn":
+                    y_live, y_overlay, status = self.workflow.compute_live_dn_pair(spectrum)
+                    ylabel = "DN"
+                    overlay_label = "Dark current"
+                elif mode == "radiance":
+                    y_live, y_overlay, status = self.workflow.compute_live_radiance_pair(
+                        header, spectrum
+                    )
+                    ylabel = "Radiance-like signal"
+                    overlay_label = "White reference"
+                elif mode == "reflectance":
+                    y_live, status = self.workflow.compute_live_reflectance(header, spectrum)
+                    ylabel = "Reflectance factor"
                 else:
-                    self._live_line.set_data(wl, spectrum)
+                    y_live = np.asarray(spectrum)
+                    ylabel = "DN"
+                    status = "Unknown mode '{}'; showing DN.".format(mode)
+
+                if self._live_bg_line is None:
+                    (self._live_bg_line,) = self._live_ax.plot(
+                        wl, np.full_like(wl, np.nan, dtype=float), color="black", zorder=1
+                    )
+                if self._live_fg_line is None:
+                    (self._live_fg_line,) = self._live_ax.plot(
+                        wl, np.full_like(wl, np.nan, dtype=float), color="blue", zorder=2
+                    )
+
+                if y_overlay is not None:
+                    self._live_bg_line.set_data(wl, y_overlay)
+                    self._live_bg_line.set_visible(True)
+                    if overlay_label is not None:
+                        self._live_bg_line.set_label(overlay_label)
+                else:
+                    self._live_bg_line.set_data(wl, np.full_like(wl, np.nan, dtype=float))
+                    self._live_bg_line.set_visible(False)
+
+                if y_live is not None:
+                    self._live_fg_line.set_data(wl, y_live)
+                    self._live_fg_line.set_visible(True)
+                    self._live_fg_line.set_label("Live")
+                else:
+                    self._live_fg_line.set_data(wl, np.full_like(wl, np.nan, dtype=float))
+                    self._live_fg_line.set_visible(False)
+
+                self._live_ax.set_ylabel(ylabel)
+                if self._live_bg_line.get_visible() and self._live_fg_line.get_visible():
+                    self._live_ax.legend(loc="upper right")
+                else:
+                    legend = self._live_ax.get_legend()
+                    if legend is not None:
+                        legend.remove()
+
+                self.live_plot_status_var.set(status)
                 self._live_ax.relim()
                 self._live_ax.autoscale_view()
                 self.live_canvas.draw_idle()
