@@ -675,6 +675,19 @@ class GoniocontrolGUI(tk.Tk):
                 self._format_collection_status(self._white_collected_at)
             )
 
+    def _has_dark_calibration(self):
+        calibration = self.state_obj.calibration
+        return (
+            calibration.dark_current is not None
+            and calibration.drift_dark is not None
+        )
+
+    def _reset_collection_status_labels(self):
+        self._dark_collected_at = None
+        self._white_collected_at = None
+        self.dark_last_measured_var.set("Not collected yet!")
+        self.white_last_measured_var.set("Not collected yet!")
+
     def _browse_output_file(self):
         current = Path(
             self.outfile_var.get().strip() or (self.workspace / "Test00.pickle")
@@ -778,6 +791,7 @@ class GoniocontrolGUI(tk.Tk):
                     )
                 ),
             )
+            self.after(0, self._reset_collection_status_labels)
         self.controller.run_async(
             "Optimize", run
         )
@@ -811,6 +825,13 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Collect dark", run)
 
     def _white(self):
+        if not self._has_dark_calibration():
+            messagebox.showerror(
+                "White Reference",
+                "Dark Current must be measured before White Reference",
+            )
+            return
+
         def run():
             za = float(self.sensor_zenith_var.get() or "0")
             self.workflow.collect_white(za)

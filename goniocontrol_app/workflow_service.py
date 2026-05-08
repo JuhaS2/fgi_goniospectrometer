@@ -323,6 +323,16 @@ class WorkflowService:
             if header[0] == 100:
                 break
         self.state.calibration.optimizer_header = np.array(header, dtype=object)
+        # Optimize updates integration/gain/offset settings, so prior dark/white
+        # calibrations are no longer valid for subsequent math.
+        self.state.calibration.dark_current = None
+        self.state.calibration.drift_dark = None
+        self.state.calibration.dark_remainder = None
+        self.state.calibration.white = None
+        self.state.calibration.aa = None
+        self.state.calibration.ending_white = None
+        self.state.calibration.wr_zenith = None
+        self.state.calibration.wr_end_zenith = None
         self.persistence.save_array(
             "Oheader.npy", self.state.calibration.optimizer_header
         )
