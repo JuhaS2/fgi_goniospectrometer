@@ -95,16 +95,16 @@ class LiveSpectrumService:
                     max(self.min_interval_s, tuned),
                 )
                 # print("DEBUG: LiveSpectrumService poll #{} ok elapsed={:.3f}s next={:.3f}s".format(
-                    # poll_id, elapsed_s, self._next_interval_s))
+                # poll_id, elapsed_s, self._next_interval_s))
                 self._on_poll_success()
             except Exception as exc:
                 elapsed_s = time.perf_counter() - t0
                 # print("DEBUG: LiveSpectrumService poll #{} FAILED elapsed={:.3f}s {}: {}".format(
-                    # poll_id, elapsed_s, type(exc).__name__, exc))
+                # poll_id, elapsed_s, type(exc).__name__, exc))
                 self._on_poll_failure(exc)
                 # print("DEBUG: LiveSpectrumService poll #{} next={:.3f}s streak={} backoff={:.3f}s".format(
-                    # poll_id, self._next_interval_s, self._error_streak,
-                    # self._error_backoff_s))
+                # poll_id, self._next_interval_s, self._error_streak,
+                # self._error_backoff_s))
 
             self._stop_event.wait(self._next_interval_s)
         # print("DEBUG: LiveSpectrumService loop exiting")
@@ -131,9 +131,10 @@ class LiveSpectrumService:
                 self.emit_log("Live spectrum: reconnected to spectrometer.")
         except Exception as exc:
             # print("DEBUG: LiveSpectrumService poll #{} reconnect FAILED {}: {}".format(
-                # poll_id, type(exc).__name__, exc))
+            # poll_id, type(exc).__name__, exc))
             # Swallow: the upcoming read_single() will raise too and the
             # error path below will keep us in backoff until the next try.
+            pass
 
     def _on_poll_success(self):
         if self._error_streak > 0 and self.emit_log:
