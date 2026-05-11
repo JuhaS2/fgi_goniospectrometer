@@ -49,6 +49,11 @@ except ModuleNotFoundError:
 
 
 from goniocontrol_app.errors import CalibrationMissingError, PreconditionError
+from goniocontrol_app.services.spectrometer_service import (
+    DEFAULT_OPT_GAIN,
+    DEFAULT_OPT_ITIME,
+    DEFAULT_OPT_OFFSET,
+)
 from goniocontrol_app.state import AppState
 
 ProgressFn = Callable[[str], None]
@@ -286,8 +291,22 @@ class WorkflowService:
                 # hdr[2], hdr[3], hdr[4]))
             self.spectrometer.set_opt(hdr[2], hdr[3], hdr[4])
         else:
-            # print("DEBUG: load_runtime_state no cached Oheader, skipping set_opt")
-            pass
+            self.spectrometer.set_opt(
+                DEFAULT_OPT_ITIME, DEFAULT_OPT_GAIN, DEFAULT_OPT_OFFSET
+            )
+            msg = (
+                "Oheader.npy missing; applied default optimizer "
+                "(itime={} gain={} offset={}). Run Optimize when hardware is ready.".format(
+                    DEFAULT_OPT_ITIME,
+                    DEFAULT_OPT_GAIN,
+                    DEFAULT_OPT_OFFSET,
+                )
+            )
+            self.state.runtime_notice = (
+                "{}{}{}".format(self.state.runtime_notice, "\n", msg)
+                if self.state.runtime_notice
+                else msg
+            )
         self._vwl1 = vwl1
         self._vdcc = vdcc
         self._wl = vwl1 + np.arange(Nwl)

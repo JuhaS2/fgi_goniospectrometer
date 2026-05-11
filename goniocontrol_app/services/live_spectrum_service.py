@@ -130,8 +130,14 @@ class LiveSpectrumService:
             if self.emit_log:
                 self.emit_log("Live spectrum: reconnected to spectrometer.")
         except Exception as exc:
-            # print("DEBUG: LiveSpectrumService poll #{} reconnect FAILED {}: {}".format(
-            # poll_id, type(exc).__name__, exc))
+            print(
+                "[live_spectrum:{}] reconnect attempt failed (#{}): {}: {}".format(
+                    threading.current_thread().name,
+                    poll_id,
+                    type(exc).__name__,
+                    exc,
+                )
+            )
             # Swallow: the upcoming read_single() will raise too and the
             # error path below will keep us in backoff until the next try.
             pass

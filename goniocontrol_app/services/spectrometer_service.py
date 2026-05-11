@@ -3,10 +3,13 @@ import threading
 import time
 from typing import List, Optional
 
-import numpy as np
-
 from asdcontroller.asd_controller import ASDController
 from asdcontroller.asd_types import frinterp_to_legacy_header_and_spectrum
+
+# Applied when no Oheader.npy / cache exists yet (matches legacy CLI defaults).
+DEFAULT_OPT_ITIME = 3
+DEFAULT_OPT_GAIN = [16, 16]
+DEFAULT_OPT_OFFSET = [2063, 2070]
 
 
 class SpectrometerService:
@@ -33,6 +36,14 @@ class SpectrometerService:
         self.socket = None
         self._lock = threading.RLock()
         self._needs_reconnect = False
+        self._last_itime: Optional[int] = None
+        self._last_gain: Optional[List[int]] = None
+        self._last_offset: Optional[List[int]] = None
+
+    def _diag(self, msg: str):
+        """Terminal diagnostics for unexpected transport/protocol behaviour."""
+        thread = threading.current_thread().name
+        print("[spectrometer:{}] {}".format(thread, msg))
 
     def _trace(self, op: str, msg: str = ""):
         thread = threading.current_thread().name
@@ -59,6 +70,53 @@ class SpectrometerService:
             self._controller = None
         self.socket = None
 
+    def _remember_opt(self, itime: int, gain: List[int], offset: List[int]):
+        self._last_itime = int(itime)
+        self._last_gain = list(gain)
+        self._last_offset = list(offset)
+
+    def _effective_opt_triple(self):
+        """Integration time, gain pair, offset pair for SetOpt after reconnect."""
+        if (
+            self._last_itime is not None
+            and self._last_gain is not None
+            and self._last_offset is not None
+        ):
+            return self._last_itime, list(self._last_gain), list(self._last_offset)
+        return DEFAULT_OPT_ITIME, list(DEFAULT_OPT_GAIN), list(DEFAULT_OPT_OFFSET)
+
+    def _bootstrap_tcp_session(self, reason: str):
+        """vnir_info consumes the ASD TCP greeting; SetOpt applies cached or default IC.
+
+        A fresh ``ASDController`` has ``hello=True`` until something receives it.
+        Live preview and ``read_single`` retries call ``reconnect()`` without
+        re-running GUI startup, so we must repeat this handshake here.
+        """
+        itime, gain, offset = self._effective_opt_triple()
+        cached = self._last_itime is not None
+        self._diag(
+            "session bootstrap ({}): vnir_info + SetOpt; "
+            "using {} params itime={} gain={} offset={}".format(
+                reason,
+                "cached" if cached else "DEFAULT",
+                itime,
+                gain,
+                offset,
+            )
+        )
+        t0 = time.time()
+        try:
+            self.vnir_info()
+            self.set_opt(itime, gain, offset)
+        except Exception as exc:
+            self._diag(
+                "session bootstrap FAILED after {:.3f}s: {}: {}".format(
+                    time.time() - t0, type(exc).__name__, exc
+                )
+            )
+            raise
+        self._diag("session bootstrap ok ({:.3f}s)".format(time.time() - t0))
+
     def connect(self):
         with self._locked("connect"):
             self._trace("connect", "host={} port={}".format(self.host, self.port))
@@ -81,6 +139,9 @@ class SpectrometerService:
     def reconnect(self):
         """Tear down the existing controller and dial a fresh one."""
         with self._locked("reconnect"):
+            self._diag(
+                "reconnecting to {}:{} …".format(self.host, self.port)
+            )
             self._trace("reconnect", "host={} port={}".format(self.host, self.port))
             self._dispose_controller()
             self._needs_reconnect = False
@@ -92,10 +153,20 @@ class SpectrometerService:
                 )
             except Exception as exc:
                 self._dispose_controller()
+                self._diag(
+                    "reconnect FAILED: {}: {}".format(type(exc).__name__, exc)
+                )
                 raise
             self.socket = self._controller
             greeting = b"ASD"
             self._trace("reconnect", "controller ok")
+            try:
+                self._bootstrap_tcp_session(reason="reconnect")
+            except Exception:
+                self._dispose_controller()
+                self._needs_reconnect = True
+                raise
+            self._diag("reconnect complete")
             return greeting
 
     def needs_reconnect(self) -> bool:
@@ -133,6 +204,10 @@ class SpectrometerService:
     def _mark_dead_if_transport_error(self, exc: BaseException):
         if isinstance(exc, self._TRANSPORT_DEAD_EXCEPTIONS):
             if not self._needs_reconnect:
+                self._diag(
+                    "transport error — link marked dead; retry will reconnect "
+                    "({}: {})".format(type(exc).__name__, exc)
+                )
                 self._trace(
                     "transport",
                     "marking link dead, reconnect required ({}: {})".format(
@@ -169,6 +244,7 @@ class SpectrometerService:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("optimize", "FAILED {}: {}".format(type(exc).__name__, exc))
                 raise
+            self._remember_opt(result[2], result[3], result[4])
             self._trace("optimize", "ok header={} elapsed={:.3f}s".format(
                 result[0], time.time() - t0))
             return result
@@ -179,6 +255,7 @@ class SpectrometerService:
                 g: List[int] = list(gain) if not isinstance(gain, list) else gain
                 o: List[int] = list(offset) if not isinstance(offset, list) else offset
                 self._ctrl().apply_set_opt(int(itime), g, o)
+                self._remember_opt(int(itime), g, o)
             except Exception as exc:
                 self._mark_dead_if_transport_error(exc)
                 self._trace("set_opt", "FAILED {}: {}".format(type(exc).__name__, exc))
@@ -203,6 +280,11 @@ class SpectrometerService:
                     break
                 except socket.timeout as exc:
                     last_exc = exc
+                    self._diag(
+                        "read_single {} socket.timeout after {:.3f}s — {}".format(
+                            label, time.time() - t0, exc
+                        )
+                    )
                     self._trace(
                         "read_single",
                         "{} timed out after {:.3f}s".format(label, time.time() - t0),
@@ -210,6 +292,14 @@ class SpectrometerService:
                     continue
                 except Exception as exc:
                     self._mark_dead_if_transport_error(exc)
+                    self._diag(
+                        "read_single {} FAILED {}: {} elapsed={:.3f}s".format(
+                            label,
+                            type(exc).__name__,
+                            exc,
+                            time.time() - t0,
+                        )
+                    )
                     self._trace(
                         "read_single",
                         "{} FAILED {}: {} elapsed={:.3f}s".format(
@@ -224,6 +314,11 @@ class SpectrometerService:
                 if last_exc is None:
                     last_exc = TimeoutError("all read_single attempts failed")
                 self._mark_dead_if_transport_error(last_exc)
+                self._diag(
+                    "read_single FAILED after all attempts: {}: {}".format(
+                        type(last_exc).__name__, last_exc
+                    )
+                )
                 self._trace(
                     "read_single",
                     "FAILED after all attempts {}: {} elapsed={:.3f}s".format(
@@ -260,6 +355,11 @@ class SpectrometerService:
                     break
                 except socket.timeout as exc:
                     last_exc = exc
+                    self._diag(
+                        "read_average {} socket.timeout after {:.3f}s — {}".format(
+                            label, time.time() - t0, exc
+                        )
+                    )
                     self._trace(
                         "read_average",
                         "{} timed out after {:.3f}s".format(
@@ -269,6 +369,14 @@ class SpectrometerService:
                     continue
                 except Exception as exc:
                     self._mark_dead_if_transport_error(exc)
+                    self._diag(
+                        "read_average {} FAILED {}: {} elapsed={:.3f}s".format(
+                            label,
+                            type(exc).__name__,
+                            exc,
+                            time.time() - t0,
+                        )
+                    )
                     self._trace(
                         "read_average",
                         "{} FAILED {}: {} elapsed={:.3f}s".format(
@@ -283,6 +391,11 @@ class SpectrometerService:
                 if last_exc is None:
                     last_exc = TimeoutError("all read_average attempts failed")
                 self._mark_dead_if_transport_error(last_exc)
+                self._diag(
+                    "read_average FAILED repeats={}: {}: {}".format(
+                        repeats, type(last_exc).__name__, last_exc
+                    )
+                )
                 self._trace(
                     "read_average",
                     "FAILED repeats={} after all attempts {}: {} elapsed={:.3f}s".format(
