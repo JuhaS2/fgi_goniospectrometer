@@ -1016,6 +1016,7 @@ class GoniocontrolGUI(tk.Tk):
         )
 
     def _set_motor_zero(self, role):
+        self.motor_target_vars[role].set("{:.2f}".format(0.0))
         motor_name = self.motor_labels[role]
         self.controller.run_async(
             "Set zero for {}".format(motor_name),
