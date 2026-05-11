@@ -345,11 +345,37 @@ class WorkflowService:
         self.state.outfile = str(candidate.resolve())
 
     def new_dataset(self, outfile):
-        self.set_output_dataset_path(outfile)
+        """Resolve output path: load an existing JSON dataset or start an empty one."""
+        text = (outfile or "").strip()
+        if not text:
+            raise PreconditionError(
+                "No output dataset file selected. Choose a JSON file under Output&Metadata (Browse)."
+            )
+        candidate = Path(text)
+        if candidate.suffix.lower() != ".json":
+            candidate = candidate.with_suffix(".json")
+        if not candidate.is_absolute():
+            candidate = self.state.workspace / candidate
+        path = candidate.resolve()
+        os.makedirs(path.parent, exist_ok=True)
+
+        if path.exists():
+            doc = self.persistence.load_dataset_document(str(path))
+            if doc is None:
+                raise ValueError(
+                    "Dataset file {} disappeared before it could be opened.".format(path)
+                )
+            self.state.data = self.persistence.measurements_from_document(doc)
+            self.persistence.apply_dataset_metadata_to_state(doc, self.state)
+        else:
+            self.state.data = []
+            self.state.authors = ""
+            self.state.target_name = ""
+            self.state.target_description = ""
+            self.state.reflectance_mode_locked = False
+
+        self.state.outfile = str(path)
         self.save_runtime_settings()
-        os.makedirs(Path(self.state.outfile).parent, exist_ok=True)
-        self.state.data = []
-        self.state.reflectance_mode_locked = False
 
     def restore_spectrometer(self):
         self.spectrometer.restore()
@@ -660,6 +686,9 @@ class WorkflowService:
                 self.state.data,
                 self.state.reflectance_mode,
                 self.state.devices.npols,
+                authors=self.state.authors,
+                target_name=self.state.target_name,
+                target_description=self.state.target_description,
             )
             if self.state.data:
                 self.state.reflectance_mode_locked = True
@@ -669,6 +698,9 @@ class WorkflowService:
             self.state.data,
             self.state.reflectance_mode,
             self.state.devices.npols,
+            authors=self.state.authors,
+            target_name=self.state.target_name,
+            target_description=self.state.target_description,
         )
 
     def shutdown(self):

@@ -706,6 +706,12 @@ class GoniocontrolGUI(tk.Tk):
         )
         self.light_zenith_var.set("{:.2f}".format(self.state_obj.light_zenith_deg))
         self.light_azimuth_var.set("{:.2f}".format(self.state_obj.light_azimuth_deg))
+        self.output_authors_var.set(self.state_obj.authors or "")
+        self.output_target_name_var.set(self.state_obj.target_name or "")
+        self.output_target_description_text.delete("1.0", tk.END)
+        self.output_target_description_text.insert(
+            "1.0", self.state_obj.target_description or ""
+        )
         self._update_reflectance_save_controls()
         self._dark_collected_at = self.state_obj.calibration.dark_collected_at
         self._white_collected_at = self.state_obj.calibration.white_collected_at
@@ -785,6 +791,13 @@ class GoniocontrolGUI(tk.Tk):
         self.outfile_var.set(self.state_obj.outfile)
         return True
 
+    def _push_output_metadata_to_state(self):
+        self.state_obj.authors = (self.output_authors_var.get() or "").strip()
+        self.state_obj.target_name = (self.output_target_name_var.get() or "").strip()
+        self.state_obj.target_description = (
+            self.output_target_description_text.get("1.0", "end-1c") or ""
+        ).strip()
+
     def _browse_output_file(self):
         raw = self.outfile_var.get().strip()
         if raw:
@@ -810,11 +823,33 @@ class GoniocontrolGUI(tk.Tk):
         selected_path = Path(selected)
         if selected_path.suffix.lower() != ".json":
             selected_path = selected_path.with_suffix(".json")
-        outfile = str(selected_path.resolve())
+        selected_path = selected_path.resolve()
+        outfile = str(selected_path)
+        exists = selected_path.exists()
+        label = "Open dataset" if exists else "New dataset"
         self.outfile_var.set(outfile)
-        self.controller.run_async(
-            "New dataset", lambda: self.workflow.new_dataset(outfile)
-        )
+
+        def run_open_or_create():
+            try:
+                self.workflow.new_dataset(outfile)
+            except ValueError as exc:
+                self.after(
+                    0,
+                    lambda msg=str(exc): messagebox.showerror(
+                        "Dataset load failed", msg
+                    ),
+                )
+            except PreconditionError as exc:
+                self.after(
+                    0,
+                    lambda msg=str(exc): messagebox.showerror(
+                        "Output file required", msg
+                    ),
+                )
+            finally:
+                self.after(0, self._sync_runtime_state_ui)
+
+        self.controller.run_async(label, run_open_or_create)
 
     def _browse_angle_file(self):
         selected = filedialog.askopenfilename(
@@ -1134,6 +1169,7 @@ class GoniocontrolGUI(tk.Tk):
             return
         if not self._ensure_output_dataset_selected():
             return
+        self._push_output_metadata_to_state()
         repeats = int(self.repeats_var.get() or "1")
         self.controller.run_measure(repeats)
 
@@ -1159,6 +1195,7 @@ class GoniocontrolGUI(tk.Tk):
 
         if not self._ensure_output_dataset_selected():
             return
+        self._push_output_metadata_to_state()
 
         angle_row = (sensor_pol, lamp_pol, zenith, azimuth, sample, 0.0, 1.0)
         previous_angles = list(self.state_obj.angles)

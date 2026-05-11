@@ -67,4 +67,7 @@ class AppState:
     devices: DeviceState = field(default_factory=DeviceState)
     light_zenith_deg: float = 0.0
     light_azimuth_deg: float = 0.0
+    authors: str = ""
+    target_name: str = ""
+    target_description: str = ""
 

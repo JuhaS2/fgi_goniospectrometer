@@ -31,6 +31,14 @@ def _polarization_measurement_mode_label(npols: int) -> str:
     return "Yes" if npols > 1 else "No"
 
 
+def _dataset_info_string_field(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _round_significant_float(x: float, ndigits: int = 5) -> float:
     if x == 0.0:
         return 0.0
@@ -384,21 +392,41 @@ class PersistenceService:
         return [self._measurement_record_to_tuple(rec, pol_yes) for rec in measurements]
 
     def apply_dataset_metadata_to_state(self, doc: Dict[str, Any], state: AppState) -> None:
+        info_raw = doc.get("dataset_info")
+        info = info_raw if isinstance(info_raw, dict) else {}
+        state.authors = _dataset_info_string_field(info.get("authors"))
+        state.target_name = _dataset_info_string_field(info.get("target_name"))
+        state.target_description = _dataset_info_string_field(
+            info.get("target_description")
+        )
+
         measurements = doc.get("measurements") or []
-        if not measurements:
-            state.reflectance_mode_locked = False
-            return
-        info = doc.get("dataset_info") or {}
         sq = info.get("spectrum_quantity")
+
+        if measurements:
+            if sq == "reflectance_factor":
+                state.reflectance_mode = True
+            elif sq == "radiance":
+                state.reflectance_mode = False
+            else:
+                raise ValueError(
+                    "dataset_info.spectrum_quantity must be 'reflectance_factor' or 'radiance'."
+                )
+            state.reflectance_mode_locked = True
+            return
+
         if sq == "reflectance_factor":
             state.reflectance_mode = True
+            state.reflectance_mode_locked = True
         elif sq == "radiance":
             state.reflectance_mode = False
+            state.reflectance_mode_locked = True
+        elif sq is None:
+            state.reflectance_mode_locked = False
         else:
             raise ValueError(
                 "dataset_info.spectrum_quantity must be 'reflectance_factor' or 'radiance'."
             )
-        state.reflectance_mode_locked = True
 
     def load_existing_dataset(self, outfile):
         try:
@@ -415,6 +443,9 @@ class PersistenceService:
         data,
         reflectance_mode: bool,
         npols: int,
+        authors: str = "",
+        target_name: str = "",
+        target_description: str = "",
     ):
         if not (outfile or "").strip():
             raise PreconditionError(
@@ -457,14 +488,24 @@ class PersistenceService:
             for row in data
         ]
 
-        doc = {
-            "goniocontrol_dataset_format_version": DATASET_FORMAT_VERSION,
-            "dataset_info": {
+        merged_info: Dict[str, Any] = {}
+        if existing_doc and isinstance(existing_doc.get("dataset_info"), dict):
+            merged_info = dict(existing_doc["dataset_info"])
+        merged_info.update(
+            {
                 "dataset_description": DATASET_DESCRIPTION,
                 "spectrum_quantity": expected_sq,
                 "polarization_measurement_mode": expected_pol,
                 "dataset_last_updated_utc": datetime.now(timezone.utc).isoformat(),
-            },
+                "authors": authors or "",
+                "target_name": target_name or "",
+                "target_description": target_description or "",
+            }
+        )
+
+        doc = {
+            "goniocontrol_dataset_format_version": DATASET_FORMAT_VERSION,
+            "dataset_info": merged_info,
             "measurements": measurements_json,
         }
 
