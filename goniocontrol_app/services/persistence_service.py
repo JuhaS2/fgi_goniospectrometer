@@ -3,6 +3,7 @@ import math
 import re
 import shutil
 import sys
+import uuid
 from datetime import datetime, timezone
 from os import environ
 from pathlib import Path
@@ -50,6 +51,17 @@ def _round_significant_float(x: float, ndigits: int = 5) -> float:
     return float(
         round(x, ndigits - 1 - int(math.floor(math.log10(abs(x)))))
     )
+
+
+def _spectrum_ndarray_to_compact_json(spec: Any) -> str:
+    """Serialize spectrum ndarray as a compact JSON array (no extra whitespace)."""
+    arr = np.asarray(spec, dtype=float)
+    arr = np.nan_to_num(arr, nan=0.0, posinf=np.inf, neginf=-np.inf)
+    if arr.ndim == 0:
+        v = _round_significant_float(float(arr), 5)
+        return json.dumps(v, separators=(",", ":"))
+    inner = ",".join(_spectrum_ndarray_to_compact_json(arr[idx]) for idx in range(arr.shape[0]))
+    return "[" + inner + "]"
 
 
 class PersistenceService:
@@ -486,10 +498,18 @@ class PersistenceService:
                     )
                 )
 
-        measurements_json = [
-            self._measurement_tuple_to_record(row, expected_pol == "Yes")
-            for row in data
-        ]
+        spectrum_substitutions = []
+        measurements_json = []
+        for row in data:
+            marker = "!__GONIO_SPEC_{}__!".format(uuid.uuid4().hex)
+            spectrum_substitutions.append(
+                (marker, _spectrum_ndarray_to_compact_json(row[5]))
+            )
+            measurements_json.append(
+                self._measurement_tuple_to_record(
+                    row, expected_pol == "Yes", spectrum_json_value=marker
+                )
+            )
 
         merged_info: Dict[str, Any] = {}
         if existing_doc and isinstance(existing_doc.get("dataset_info"), dict):
@@ -514,12 +534,18 @@ class PersistenceService:
         }
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        text = json.dumps(doc, indent=2)
+        for marker, compact in spectrum_substitutions:
+            text = text.replace(json.dumps(marker), compact)
+        path.write_text(text, encoding="utf-8")
 
     def _spectrum_ndarray_to_json_nested(self, spec: Any) -> Any:
         arr = np.asarray(spec, dtype=float)
         if arr.ndim == 0:
-            return _round_significant_float(float(arr), 5)
+            v = float(arr)
+            if math.isnan(v):
+                v = 0.0
+            return _round_significant_float(v, 5)
         return [self._spectrum_ndarray_to_json_nested(arr[idx]) for idx in range(arr.shape[0])]
 
     def _json_nested_to_spectrum_ndarray(self, obj: Any) -> np.ndarray:
@@ -528,7 +554,12 @@ class PersistenceService:
             return np.array(rows, dtype=float)
         return np.asarray(float(obj), dtype=float)
 
-    def _measurement_tuple_to_record(self, row: Tuple[Any, ...], polarization_yes: bool) -> Dict[str, Any]:
+    def _measurement_tuple_to_record(
+        self,
+        row: Tuple[Any, ...],
+        polarization_yes: bool,
+        spectrum_json_value: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         sz, sa00, ze, az, be, spec, _wwa, _wwb, lz, la = row
         rec = {
             "sensor_zenith_angle_deg": float(ze),
@@ -536,7 +567,11 @@ class PersistenceService:
             "sample_rotation_angle_deg": float(be),
             "light_zenith_angle_deg": float(lz),
             "light_azimuth_angle_deg": float(la),
-            "spectrum": self._spectrum_ndarray_to_json_nested(spec),
+            "spectrum": (
+                spectrum_json_value
+                if spectrum_json_value is not None
+                else self._spectrum_ndarray_to_json_nested(spec)
+            ),
         }
         if polarization_yes:
             rec["sensor_polarizer_angle_deg"] = float(sz)
