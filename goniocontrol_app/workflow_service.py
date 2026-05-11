@@ -221,6 +221,9 @@ class WorkflowService:
         self.load_runtime_settings()
         self.state.runtime_notice = None
         # print("DEBUG: load_runtime_state -> vnir_info()")
+        try_restore = getattr(self.spectrometer, "try_restore", None)
+        if callable(try_restore):
+            try_restore()
         vwl1, _, vdcc = self.spectrometer.vnir_info()
         self.state.calibration.optimizer_header = self.persistence.load_optional_array(
             "Oheader.npy"

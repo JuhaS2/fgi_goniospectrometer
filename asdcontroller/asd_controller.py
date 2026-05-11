@@ -48,6 +48,35 @@ class ASDController:
         self.closed = False
         self.hello = True
 
+    def _drain_readable_bytes(self, max_bytes=65536, per_read_timeout=0.05):
+        """Discard bytes already sitting in the socket buffer (see ASDlib peek_socket).
+
+        If a prior reply was truncated or padded differently than ``_recv``
+        expects, leftover bytes desynchronize every later command — often
+        showing up as spectral acquires that never receive data.
+        """
+        drained = bytearray()
+        old_to = self.sock.gettimeout()
+        try:
+            self.sock.settimeout(per_read_timeout)
+            while len(drained) < max_bytes:
+                try:
+                    chunk = self.sock.recv(min(4096, max_bytes - len(drained)))
+                except socket.timeout:
+                    break
+                if not chunk:
+                    raise ConnectionError(
+                        "ASD socket closed while draining pending data "
+                        "({} bytes drained)".format(len(drained))
+                    )
+                drained.extend(chunk)
+        finally:
+            try:
+                self.sock.settimeout(old_to)
+            except Exception:
+                pass
+        return bytes(drained)
+
     def _recv(self, data_bytes: int) -> bytes:
         initial_msg_len = 0
         if self.hello:
@@ -58,6 +87,11 @@ class ASDController:
         try:
             while len(msg) < total_bytes:
                 rec = self.sock.recv(16384)
+                if not rec:
+                    raise ConnectionError(
+                        "ASD socket closed (received 0 bytes while expecting {} payload "
+                        "bytes + {} hello)".format(data_bytes, initial_msg_len)
+                    )
                 msg += rec
                 time.sleep(0.1)
         except socket.timeout:
@@ -75,13 +109,34 @@ class ASDController:
         return create_InitStruct(data)
 
     def _optimize(self) -> OptimizeStruct:
+        # Never drain while ``hello`` is still pending — the greeting sits in
+        # the buffer and must be consumed by the next framed ``_recv``.
+        if not self.hello:
+            leftover = self._drain_readable_bytes()
+            if leftover:
+                print(
+                    "[asd] warning: discarded {} stale socket bytes before OPT,7".format(
+                        len(leftover)
+                    )
+                )
         self.sock.settimeout(60)
         self.sock.sendall(bytes("OPT,7", "utf-8"))
         data = self._recv(OPT_SIZE * 4)
         return create_OptimizeStruct(data)
 
     def _acquire(self, n_averages: int) -> FRInterpSpec:
-        self.sock.settimeout(5 + 1 * n_averages)
+        if not self.hello:
+            leftover = self._drain_readable_bytes()
+            if leftover:
+                print(
+                    "[asd] warning: discarded {} stale socket bytes before A,1,{}".format(
+                        len(leftover), n_averages
+                    )
+                )
+        # Spectrum transfer can be slow on congested links / ARM hosts; the old
+        # 5+N second budget often surfaced as false timeouts with no bytes read.
+        acquire_timeout_s = max(30.0, 15.0 + 10.0 * float(n_averages))
+        self.sock.settimeout(acquire_timeout_s)
         self.sock.sendall(bytes("A,1,{}".format(n_averages), "utf-8"))
         data = self._recv((MAX_WLEN - MIN_WLEN) * 4 + ACQUIRE_HEADER_SIZE * 4)
         return create_FRInterpSpec(data)

@@ -22,6 +22,9 @@ class MockSpectrometerService:
     def restore(self):
         return None
 
+    def try_restore(self):
+        return None
+
     def optimize(self):
         return (100, 0, self._itime, [1, 1], [0, 0])
 

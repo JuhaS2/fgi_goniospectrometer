@@ -106,6 +106,10 @@ class SpectrometerService:
         )
         t0 = time.time()
         try:
+            # Align instrument-side session state; INIT/IC can succeed while the
+            # acquisition path stays wedged until RESTORE (same symptom as the log:
+            # vnir_info OK, A,1,1 returns 0 bytes).
+            self.try_restore()
             self.vnir_info()
             self.set_opt(itime, gain, offset)
         except Exception as exc:
@@ -169,6 +173,23 @@ class SpectrometerService:
             self._diag("reconnect complete")
             return greeting
 
+    def try_restore(self):
+        """Send RESTORE,1 when supported; ignore failures (instrument may already be ready)."""
+        with self._locked("try_restore"):
+            if self._controller is None:
+                self._diag("try_restore: skipped (no controller)")
+                return
+            try:
+                self._diag("try_restore: RESTORE,1 …")
+                self._controller.restore()
+                self._diag("try_restore: ok")
+            except Exception as exc:
+                self._diag(
+                    "try_restore: failed (continuing): {}: {}".format(
+                        type(exc).__name__, exc
+                    )
+                )
+
     def needs_reconnect(self) -> bool:
         return self._needs_reconnect or self._controller is None
 
@@ -228,6 +249,13 @@ class SpectrometerService:
 
     def restore(self):
         with self._locked("restore"):
+            if self._needs_reconnect or self._controller is None:
+                self._diag(
+                    "restore: reconnecting first (needs_reconnect={}, has_controller={})".format(
+                        self._needs_reconnect, self._controller is not None
+                    )
+                )
+                self.reconnect()
             try:
                 self._ctrl().restore()
             except Exception as exc:
@@ -237,6 +265,13 @@ class SpectrometerService:
 
     def optimize(self):
         with self._locked("optimize"):
+            if self._needs_reconnect or self._controller is None:
+                self._diag(
+                    "optimize: reconnecting first (needs_reconnect={}, has_controller={})".format(
+                        self._needs_reconnect, self._controller is not None
+                    )
+                )
+                self.reconnect()
             t0 = time.time()
             try:
                 result = self._optimize_tuple(self._ctrl())
