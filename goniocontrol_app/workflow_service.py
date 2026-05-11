@@ -704,7 +704,6 @@ class WorkflowService:
         )
 
     def shutdown(self):
-        self.persistence.export_text(self.state)
         self.spectrometer.close()
         self.motors.close_all()
 

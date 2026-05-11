@@ -28,6 +28,8 @@ from goniocontrol_app.services.persistence_service import PersistenceService
 from goniocontrol_app.state import AppState
 from goniocontrol_app.workflow_service import WorkflowService
 
+DEFAULT_OUTPUT_DATA_DIR = Path("/home/pi/Desktop/Data")
+
 
 class GoniocontrolGUI(tk.Tk):
     MOTOR_ROLES = (
@@ -809,7 +811,14 @@ class GoniocontrolGUI(tk.Tk):
             )
             initialfile = current.name
         else:
-            initialdir = str(self.workspace)
+            data_dir = DEFAULT_OUTPUT_DATA_DIR
+            try:
+                data_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                data_dir = self.workspace
+            initialdir = (
+                str(data_dir) if data_dir.is_dir() else str(self.workspace)
+            )
             initialfile = ""
         selected = filedialog.asksaveasfilename(
             title="Select output file",

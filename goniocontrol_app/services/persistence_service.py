@@ -571,17 +571,3 @@ class PersistenceService:
         spec = self._json_nested_to_spectrum_ndarray(rec["spectrum"])
         return (sz, sa00, ze, az, be, spec, 0.0, 1.0, lz, la)
 
-    def export_text(self, state):
-        if not (state.outfile or "").strip():
-            return
-        outfile = self._resolve_outfile_path(state.outfile)
-        try:
-            np.savetxt(outfile.with_name("{}_.txt".format(outfile.stem)), np.ravel(state.data))
-        except Exception:
-            pass
-        out = outfile.with_suffix(".txt")
-        with out.open("w", encoding="utf-8") as handle:
-            for datum in state.data:
-                handle.write(str(datum[:5]))
-                handle.write(str(np.ravel(datum[5])) + "\n")
-
