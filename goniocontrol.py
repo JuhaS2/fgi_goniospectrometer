@@ -831,6 +831,7 @@ class GoniocontrolGUI(tk.Tk):
             initialfile=initialfile,
             defaultextension=".json",
             filetypes=[("JSON datasets", "*.json"), ("All files", "*.*")],
+            confirmoverwrite=False,
         )
         if not selected:
             return

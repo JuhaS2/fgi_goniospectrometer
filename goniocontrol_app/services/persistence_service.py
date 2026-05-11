@@ -56,7 +56,7 @@ def _round_significant_float(x: float, ndigits: int = 5) -> float:
 def _spectrum_ndarray_to_compact_json(spec: Any) -> str:
     """Serialize spectrum ndarray as a compact JSON array (no extra whitespace)."""
     arr = np.asarray(spec, dtype=float)
-    arr = np.nan_to_num(arr, nan=0.0, posinf=np.inf, neginf=-np.inf)
+    arr = np.where(np.isnan(arr), 0.0, arr)
     if arr.ndim == 0:
         v = _round_significant_float(float(arr), 5)
         return json.dumps(v, separators=(",", ":"))
