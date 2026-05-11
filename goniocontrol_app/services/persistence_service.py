@@ -21,6 +21,9 @@ DATASET_DESCRIPTION = (
     "polarization settings may also vary."
 )
 
+# One spectral band per integer nm; spectra in measurements align with this axis.
+DATASET_WAVELENGTHS_NM = list(range(350, 2501))
+
 
 def _spectrum_quantity_label(reflectance_mode: bool) -> str:
     return "reflectance_factor" if reflectance_mode else "radiance"
@@ -505,6 +508,7 @@ class PersistenceService:
 
         doc = {
             "goniocontrol_dataset_format_version": DATASET_FORMAT_VERSION,
+            "wavelengths_nm": DATASET_WAVELENGTHS_NM,
             "dataset_info": merged_info,
             "measurements": measurements_json,
         }
