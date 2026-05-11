@@ -498,11 +498,14 @@ class PersistenceService:
                     )
                 )
 
-        spectrum_substitutions = []
+        wl_marker = "!__GONIO_WL_{}__!".format(uuid.uuid4().hex)
+        compact_substitutions = [
+            (wl_marker, json.dumps(DATASET_WAVELENGTHS_NM, separators=(",", ":"))),
+        ]
         measurements_json = []
         for row in data:
             marker = "!__GONIO_SPEC_{}__!".format(uuid.uuid4().hex)
-            spectrum_substitutions.append(
+            compact_substitutions.append(
                 (marker, _spectrum_ndarray_to_compact_json(row[5]))
             )
             measurements_json.append(
@@ -528,14 +531,14 @@ class PersistenceService:
 
         doc = {
             "goniocontrol_dataset_format_version": DATASET_FORMAT_VERSION,
-            "wavelengths_nm": DATASET_WAVELENGTHS_NM,
+            "wavelengths_nm": wl_marker,
             "dataset_info": merged_info,
             "measurements": measurements_json,
         }
 
         path.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(doc, indent=2)
-        for marker, compact in spectrum_substitutions:
+        for marker, compact in compact_substitutions:
             text = text.replace(json.dumps(marker), compact)
         path.write_text(text, encoding="utf-8")
 
