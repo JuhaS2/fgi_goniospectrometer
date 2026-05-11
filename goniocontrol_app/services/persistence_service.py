@@ -290,7 +290,6 @@ class PersistenceService:
 
     def load_runtime_settings(self, defaults):
         settings = {
-            "outfile": str(self._resolve_outfile_path(str(defaults.get("outfile", "Test00")))),
             "angles_file": str(
                 defaults.get(
                     "angles_file", "example_sequences/PrincipalPlane_5deg.seq.txt"
@@ -312,10 +311,6 @@ class PersistenceService:
             return settings
         if not isinstance(data, dict):
             return settings
-
-        outfile_raw = data.get("outfile")
-        if isinstance(outfile_raw, str) and outfile_raw.strip():
-            settings["outfile"] = str(self._resolve_outfile_path(outfile_raw))
 
         angles_raw = data.get("angles_file")
         if isinstance(angles_raw, str) and angles_raw.strip():
@@ -339,10 +334,9 @@ class PersistenceService:
         return settings
 
     def save_runtime_settings(
-        self, outfile, angles_file, reflectance_mode, light_zenith_deg, light_azimuth_deg
+        self, angles_file, reflectance_mode, light_zenith_deg, light_azimuth_deg
     ):
         settings = {
-            "outfile": str(self._resolve_outfile_path(outfile)),
             "angles_file": str((angles_file if angles_file.is_absolute() else self.workspace / angles_file).resolve()),
             "reflectance_mode": bool(reflectance_mode),
             "light_zenith_deg": float(light_zenith_deg),
@@ -422,6 +416,10 @@ class PersistenceService:
         reflectance_mode: bool,
         npols: int,
     ):
+        if not (outfile or "").strip():
+            raise PreconditionError(
+                "No output dataset file selected. Choose a JSON dataset path before measuring."
+            )
         path = self._resolve_outfile_path(outfile)
         expected_sq = _spectrum_quantity_label(reflectance_mode)
         expected_pol = _polarization_measurement_mode_label(npols)
@@ -533,6 +531,8 @@ class PersistenceService:
         return (sz, sa00, ze, az, be, spec, 0.0, 1.0, lz, la)
 
     def export_text(self, state):
+        if not (state.outfile or "").strip():
+            return
         outfile = self._resolve_outfile_path(state.outfile)
         try:
             np.savetxt(outfile.with_name("{}_.txt".format(outfile.stem)), np.ravel(state.data))

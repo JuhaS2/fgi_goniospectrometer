@@ -16,6 +16,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from asdcontroller.asd_types import ITimeEnum
+from goniocontrol_app.errors import PreconditionError
 from goniocontrol_app.gui_controller import GuiController
 from goniocontrol_app.services.mock_services import (
     MockLCCService,
@@ -96,11 +97,9 @@ class GoniocontrolGUI(tk.Tk):
         self.save_format_var = tk.StringVar(
             value="reflectance" if self.state_obj.reflectance_mode else "radiance"
         )
-        default_outfile = str((self.workspace / "Test00.json").resolve())
-        self.outfile_var = tk.StringVar(value=default_outfile)
+        self.outfile_var = tk.StringVar(value="")
         self.output_authors_var = tk.StringVar(value="")
         self.output_target_name_var = tk.StringVar(value="")
-        self.state_obj.outfile = default_outfile
         self.angle_var = tk.StringVar(
             value=str(self.workspace / "example_sequences/PrincipalPlane_5deg.seq.txt")
         )
@@ -157,7 +156,7 @@ class GoniocontrolGUI(tk.Tk):
         notebook.add(status, text="System Status")
         notebook.add(motors, text="Motors")
         notebook.add(spectrometer, text="Spectrometer")
-        notebook.add(output_file_tab, text="Output file")
+        notebook.add(output_file_tab, text="Output&Metadata")
         notebook.add(setup, text="Measurement")
 
         self._build_status_panel(status)
@@ -767,8 +766,7 @@ class GoniocontrolGUI(tk.Tk):
     def _has_dark_calibration(self):
         calibration = self.state_obj.calibration
         return (
-            calibration.dark_current is not None
-            and calibration.drift_dark is not None
+            calibration.dark_current is not None and calibration.drift_dark is not None
         )
 
     def _reset_collection_status_labels(self):
@@ -777,16 +775,33 @@ class GoniocontrolGUI(tk.Tk):
         self.dark_last_measured_var.set("Not collected yet!")
         self.white_last_measured_var.set("Not collected yet!")
 
+    def _ensure_output_dataset_selected(self):
+        raw = self.outfile_var.get().strip()
+        try:
+            self.workflow.set_output_dataset_path(raw)
+        except PreconditionError as exc:
+            messagebox.showerror("Output file required", str(exc))
+            return False
+        self.outfile_var.set(self.state_obj.outfile)
+        return True
+
     def _browse_output_file(self):
-        current = Path(
-            self.outfile_var.get().strip() or (self.workspace / "Test00.json")
-        )
+        raw = self.outfile_var.get().strip()
+        if raw:
+            current = Path(raw)
+            initialdir = (
+                str(current.parent)
+                if current.parent.exists()
+                else str(self.workspace)
+            )
+            initialfile = current.name
+        else:
+            initialdir = str(self.workspace)
+            initialfile = ""
         selected = filedialog.asksaveasfilename(
             title="Select output file",
-            initialdir=str(
-                current.parent if current.parent.exists() else self.workspace
-            ),
-            initialfile=current.name,
+            initialdir=initialdir,
+            initialfile=initialfile,
             defaultextension=".json",
             filetypes=[("JSON datasets", "*.json"), ("All files", "*.*")],
         )
@@ -886,6 +901,7 @@ class GoniocontrolGUI(tk.Tk):
 
     def _optimize(self):
         za = float(self.sensor_zenith_var.get() or "0")
+
         def run():
             self.workflow.optimize(za, progress=self.log)
             self.after(
@@ -897,9 +913,8 @@ class GoniocontrolGUI(tk.Tk):
                 ),
             )
             self.after(0, self._reset_collection_status_labels)
-        self.controller.run_async(
-            "Optimize", run
-        )
+
+        self.controller.run_async("Optimize", run)
 
     def _dark(self):
         proceed = messagebox.askokcancel(
@@ -911,7 +926,9 @@ class GoniocontrolGUI(tk.Tk):
 
         def run():
             self.workflow.collect_dark()
-            collected_at = self.state_obj.calibration.dark_collected_at or datetime.now()
+            collected_at = (
+                self.state_obj.calibration.dark_collected_at or datetime.now()
+            )
             self._dark_collected_at = collected_at
             self.after(
                 0,
@@ -954,6 +971,8 @@ class GoniocontrolGUI(tk.Tk):
         self.controller.run_async("Collect white", run)
 
     def _ending_white(self):
+        if not self._ensure_output_dataset_selected():
+            return
         za = float(self.sensor_zenith_var.get() or "0")
         self.controller.run_async(
             "Collect ending white", lambda: self.workflow.collect_ending_white(za)
@@ -997,7 +1016,9 @@ class GoniocontrolGUI(tk.Tk):
                 "Light Zenith and Light Azimuth must be numeric.",
             )
             self.light_zenith_var.set("{:.2f}".format(self.state_obj.light_zenith_deg))
-            self.light_azimuth_var.set("{:.2f}".format(self.state_obj.light_azimuth_deg))
+            self.light_azimuth_var.set(
+                "{:.2f}".format(self.state_obj.light_azimuth_deg)
+            )
             return
         self.state_obj.light_zenith_deg = z
         self.state_obj.light_azimuth_deg = a
@@ -1111,6 +1132,8 @@ class GoniocontrolGUI(tk.Tk):
                 "Measurement sequence requires at least one angle row.",
             )
             return
+        if not self._ensure_output_dataset_selected():
+            return
         repeats = int(self.repeats_var.get() or "1")
         self.controller.run_measure(repeats)
 
@@ -1132,6 +1155,9 @@ class GoniocontrolGUI(tk.Tk):
                 "Manual measurement unavailable",
                 "Could not read current motor angles:\n{}".format(exc),
             )
+            return
+
+        if not self._ensure_output_dataset_selected():
             return
 
         angle_row = (sensor_pol, lamp_pol, zenith, azimuth, sample, 0.0, 1.0)
@@ -1245,17 +1271,21 @@ class GoniocontrolGUI(tk.Tk):
                 status = ""
                 overlay_label = None
                 if mode == "dn":
-                    y_live, y_overlay, status = self.workflow.compute_live_dn_pair(spectrum)
+                    y_live, y_overlay, status = self.workflow.compute_live_dn_pair(
+                        spectrum
+                    )
                     ylabel = "DN"
                     overlay_label = "Dark current"
                 elif mode == "radiance":
-                    y_live, y_overlay, status = self.workflow.compute_live_radiance_pair(
-                        header, spectrum
+                    y_live, y_overlay, status = (
+                        self.workflow.compute_live_radiance_pair(header, spectrum)
                     )
                     ylabel = "Radiance-like signal"
                     overlay_label = "White reference"
                 elif mode == "reflectance":
-                    y_live, status = self.workflow.compute_live_reflectance(header, spectrum)
+                    y_live, status = self.workflow.compute_live_reflectance(
+                        header, spectrum
+                    )
                     ylabel = "Reflectance factor"
                 else:
                     y_live = np.asarray(spectrum)
@@ -1264,11 +1294,17 @@ class GoniocontrolGUI(tk.Tk):
 
                 if self._live_bg_line is None:
                     (self._live_bg_line,) = self._live_ax.plot(
-                        wl, np.full_like(wl, np.nan, dtype=float), color="black", zorder=1
+                        wl,
+                        np.full_like(wl, np.nan, dtype=float),
+                        color="black",
+                        zorder=1,
                     )
                 if self._live_fg_line is None:
                     (self._live_fg_line,) = self._live_ax.plot(
-                        wl, np.full_like(wl, np.nan, dtype=float), color="blue", zorder=2
+                        wl,
+                        np.full_like(wl, np.nan, dtype=float),
+                        color="blue",
+                        zorder=2,
                     )
 
                 if y_overlay is not None:
@@ -1277,7 +1313,9 @@ class GoniocontrolGUI(tk.Tk):
                     if overlay_label is not None:
                         self._live_bg_line.set_label(overlay_label)
                 else:
-                    self._live_bg_line.set_data(wl, np.full_like(wl, np.nan, dtype=float))
+                    self._live_bg_line.set_data(
+                        wl, np.full_like(wl, np.nan, dtype=float)
+                    )
                     self._live_bg_line.set_visible(False)
 
                 if y_live is not None:
@@ -1285,11 +1323,16 @@ class GoniocontrolGUI(tk.Tk):
                     self._live_fg_line.set_visible(True)
                     self._live_fg_line.set_label("Live")
                 else:
-                    self._live_fg_line.set_data(wl, np.full_like(wl, np.nan, dtype=float))
+                    self._live_fg_line.set_data(
+                        wl, np.full_like(wl, np.nan, dtype=float)
+                    )
                     self._live_fg_line.set_visible(False)
 
                 self._live_ax.set_ylabel(ylabel)
-                if self._live_bg_line.get_visible() and self._live_fg_line.get_visible():
+                if (
+                    self._live_bg_line.get_visible()
+                    and self._live_fg_line.get_visible()
+                ):
                     self._live_ax.legend(loc="upper right")
                 else:
                     legend = self._live_ax.get_legend()

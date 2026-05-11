@@ -226,19 +226,19 @@ class WorkflowService:
         self.state.calibration.drift_dark = self.persistence.load_optional_array(
             "DriftDC.npy"
         )
-        self.state.outfile = self.persistence.load_outfile_name(self.state.outfile)
         self.state.data = []
         self.state.reflectance_mode_locked = False
-        try:
-            doc = self.persistence.load_dataset_document(self.state.outfile)
-        except ValueError as exc:
-            doc = None
-            msg = "Dataset load failed: {}".format(exc)
-            self.state.runtime_notice = (
-                "{}{}{}".format(self.state.runtime_notice, "\n", msg)
-                if self.state.runtime_notice
-                else msg
-            )
+        doc = None
+        if (self.state.outfile or "").strip():
+            try:
+                doc = self.persistence.load_dataset_document(self.state.outfile)
+            except ValueError as exc:
+                msg = "Dataset load failed: {}".format(exc)
+                self.state.runtime_notice = (
+                    "{}{}{}".format(self.state.runtime_notice, "\n", msg)
+                    if self.state.runtime_notice
+                    else msg
+                )
         if doc is not None:
             try:
                 self.state.data = self.persistence.measurements_from_document(doc)
@@ -295,14 +295,12 @@ class WorkflowService:
 
     def load_runtime_settings(self):
         defaults = {
-            "outfile": self.state.outfile,
             "angles_file": str(self.state.angles_file),
             "reflectance_mode": self.state.reflectance_mode,
             "light_zenith_deg": self.state.light_zenith_deg,
             "light_azimuth_deg": self.state.light_azimuth_deg,
         }
         settings = self.persistence.load_runtime_settings(defaults)
-        self.state.outfile = str(settings["outfile"])
         self.state.angles_file = Path(str(settings["angles_file"]))
         self.state.reflectance_mode = bool(settings["reflectance_mode"])
         self.state.light_zenith_deg = float(settings["light_zenith_deg"])
@@ -310,7 +308,6 @@ class WorkflowService:
 
     def save_runtime_settings(self):
         self.persistence.save_runtime_settings(
-            outfile=self.state.outfile,
             angles_file=self.state.angles_file,
             reflectance_mode=self.state.reflectance_mode,
             light_zenith_deg=self.state.light_zenith_deg,
@@ -334,14 +331,21 @@ class WorkflowService:
                 "White44.npy"
             )
 
-    def new_dataset(self, outfile):
-        candidate = Path((outfile or "").strip() or "Test00.json")
+    def set_output_dataset_path(self, outfile_raw: str) -> None:
+        text = (outfile_raw or "").strip()
+        if not text:
+            raise PreconditionError(
+                "No output dataset file selected. Choose a JSON file under Output&Metadata (Browse)."
+            )
+        candidate = Path(text)
         if candidate.suffix.lower() != ".json":
             candidate = candidate.with_suffix(".json")
         if not candidate.is_absolute():
             candidate = self.state.workspace / candidate
         self.state.outfile = str(candidate.resolve())
-        self.persistence.save_outfile_name(self.state.outfile)
+
+    def new_dataset(self, outfile):
+        self.set_output_dataset_path(outfile)
         self.save_runtime_settings()
         os.makedirs(Path(self.state.outfile).parent, exist_ok=True)
         self.state.data = []
@@ -506,6 +510,7 @@ class WorkflowService:
         )
 
     def collect_ending_white(self, wr_zenith):
+        self._require_output_dataset_path()
         self._require_white()
         self.go_zenith(wr_zenith)
         npols = self.state.devices.npols
@@ -782,7 +787,14 @@ class WorkflowService:
         )
         self.motors.wait("lamp_polarizer")
 
+    def _require_output_dataset_path(self):
+        if not (self.state.outfile or "").strip():
+            raise PreconditionError(
+                "No output dataset file selected. Choose a JSON file under Output&Metadata (Browse)."
+            )
+
     def _require_measure_preconditions(self):
+        self._require_output_dataset_path()
         self._require_dark()
         self._require_white()
         if self.state.calibration.optimizer_header is None:

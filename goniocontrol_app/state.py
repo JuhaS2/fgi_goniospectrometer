@@ -54,7 +54,7 @@ class DeviceState:
 @dataclass
 class AppState:
     workspace: Path
-    outfile: str = "Test00"
+    outfile: str = ""
     reflectance_mode: bool = True
     reflectance_mode_locked: bool = False
     angles_file: Path = field(
