@@ -353,7 +353,7 @@ class WorkflowService:
                 "White44.npy"
             )
 
-    def set_output_dataset_path(self, outfile_raw: str) -> None:
+    def _resolve_output_json_path(self, outfile_raw: str) -> Path:
         text = (outfile_raw or "").strip()
         if not text:
             raise PreconditionError(
@@ -364,25 +364,27 @@ class WorkflowService:
             candidate = candidate.with_suffix(".json")
         if not candidate.is_absolute():
             candidate = self.state.workspace / candidate
-        self.state.outfile = str(candidate.resolve())
+        return candidate.resolve()
 
-    def new_dataset(self, outfile):
-        """Resolve output path: load an existing JSON dataset or start an empty one."""
-        text = (outfile or "").strip()
-        if not text:
-            raise PreconditionError(
-                "No output dataset file selected. Choose a JSON file under Output&Metadata (Browse)."
-            )
-        candidate = Path(text)
-        if candidate.suffix.lower() != ".json":
-            candidate = candidate.with_suffix(".json")
-        if not candidate.is_absolute():
-            candidate = self.state.workspace / candidate
-        path = candidate.resolve()
+    def _switch_output_dataset(self, path: Path) -> None:
+        """Bind in-memory measurements and metadata to this dataset path.
+
+        Changing the output path clears measurements when starting a new file, or
+        loads measurements and dataset metadata from disk when the file exists.
+        Metadata fields (authors, target, etc.) are preserved when opening a
+        file that does not exist yet; callers should sync GUI fields into state
+        first when those widgets are authoritative.
+        """
+        resolved = str(path)
+        current = (self.state.outfile or "").strip()
+        if resolved == current:
+            self.state.outfile = resolved
+            return
+
         os.makedirs(path.parent, exist_ok=True)
 
         if path.exists():
-            doc = self.persistence.load_dataset_document(str(path))
+            doc = self.persistence.load_dataset_document(resolved)
             if doc is None:
                 raise ValueError(
                     "Dataset file {} disappeared before it could be opened.".format(path)
@@ -391,13 +393,17 @@ class WorkflowService:
             self.persistence.apply_dataset_metadata_to_state(doc, self.state)
         else:
             self.state.data = []
-            self.state.authors = ""
-            self.state.target_name = ""
-            self.state.target_description = ""
             self.state.reflectance_mode_locked = False
 
-        self.state.outfile = str(path)
+        self.state.outfile = resolved
         self.save_runtime_settings()
+
+    def set_output_dataset_path(self, outfile_raw: str) -> None:
+        self._switch_output_dataset(self._resolve_output_json_path(outfile_raw))
+
+    def new_dataset(self, outfile):
+        """Resolve output path: load an existing JSON dataset or start an empty one."""
+        self._switch_output_dataset(self._resolve_output_json_path(outfile))
 
     def restore_spectrometer(self):
         self.spectrometer.restore()

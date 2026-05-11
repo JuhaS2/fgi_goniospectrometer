@@ -784,13 +784,18 @@ class GoniocontrolGUI(tk.Tk):
         self.white_last_measured_var.set("Not collected yet!")
 
     def _ensure_output_dataset_selected(self):
+        self._push_output_metadata_to_state()
         raw = self.outfile_var.get().strip()
         try:
             self.workflow.set_output_dataset_path(raw)
         except PreconditionError as exc:
             messagebox.showerror("Output file required", str(exc))
             return False
+        except ValueError as exc:
+            messagebox.showerror("Dataset load failed", str(exc))
+            return False
         self.outfile_var.set(self.state_obj.outfile)
+        self._sync_runtime_state_ui()
         return True
 
     def _push_output_metadata_to_state(self):
@@ -840,6 +845,7 @@ class GoniocontrolGUI(tk.Tk):
 
         def run_open_or_create():
             try:
+                self._push_output_metadata_to_state()
                 self.workflow.new_dataset(outfile)
             except ValueError as exc:
                 self.after(
