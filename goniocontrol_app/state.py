@@ -64,4 +64,6 @@ class AppState:
     runtime_notice: Optional[str] = None
     calibration: CalibrationState = field(default_factory=CalibrationState)
     devices: DeviceState = field(default_factory=DeviceState)
+    light_zenith_deg: float = 0.0
+    light_azimuth_deg: float = 0.0
 

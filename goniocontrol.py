@@ -119,6 +119,8 @@ class GoniocontrolGUI(tk.Tk):
         self.motor_target_vars = {
             role: tk.StringVar(value="0.0") for role, _ in self.MOTOR_ROLES
         }
+        self.light_zenith_var = tk.StringVar(value="0.00")
+        self.light_azimuth_var = tk.StringVar(value="0.00")
         self.motor_drive_buttons = {}
         self.motor_zero_buttons = {}
         self.live_source_var = tk.StringVar(value="none")
@@ -523,8 +525,27 @@ class GoniocontrolGUI(tk.Tk):
             zero_btn.grid(row=row_idx, column=4, padx=4, pady=2)
             self.motor_drive_buttons[role] = drive_btn
             self.motor_zero_buttons[role] = zero_btn
+        light_frame = ttk.LabelFrame(frm, text="Light Zen & Az")
+        light_frame.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        light_row = ttk.Frame(light_frame)
+        light_row.pack(fill=tk.X, padx=4, pady=4)
+        ttk.Label(light_row, text="Light Zenith:").pack(side=tk.LEFT)
+        light_zen_entry = ttk.Entry(
+            light_row, textvariable=self.light_zenith_var, width=8
+        )
+        light_zen_entry.pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(light_row, text="Light Azimuth:").pack(side=tk.LEFT)
+        light_az_entry = ttk.Entry(
+            light_row, textvariable=self.light_azimuth_var, width=8
+        )
+        light_az_entry.pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Button(light_row, text="Set Here", command=self._set_light_here).pack(
+            side=tk.LEFT
+        )
+        light_zen_entry.bind("<FocusOut>", self._on_light_angle_focus_out)
+        light_az_entry.bind("<FocusOut>", self._on_light_angle_focus_out)
         polarizer_frame = ttk.LabelFrame(frm, text="Polarizer")
-        polarizer_frame.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        polarizer_frame.grid(row=2, column=0, sticky="we", padx=4, pady=(0, 4))
         ttk.Button(
             polarizer_frame,
             text="Calibrate Polarizer",
@@ -635,6 +656,8 @@ class GoniocontrolGUI(tk.Tk):
         self.save_format_var.set(
             "reflectance" if self.state_obj.reflectance_mode else "radiance"
         )
+        self.light_zenith_var.set("{:.2f}".format(self.state_obj.light_zenith_deg))
+        self.light_azimuth_var.set("{:.2f}".format(self.state_obj.light_azimuth_deg))
         self._dark_collected_at = self.state_obj.calibration.dark_collected_at
         self._white_collected_at = self.state_obj.calibration.white_collected_at
         if self._dark_collected_at is None:
@@ -899,6 +922,60 @@ class GoniocontrolGUI(tk.Tk):
 
     def _format_angle(self, angle):
         return "{:+.2f}°".format(angle)
+
+    def _on_light_angle_focus_out(self, event=None):
+        raw_z = self.light_zenith_var.get().strip()
+        raw_a = self.light_azimuth_var.get().strip()
+        try:
+            z = float(raw_z) if raw_z else 0.0
+            a = float(raw_a) if raw_a else 0.0
+        except ValueError:
+            messagebox.showerror(
+                "Invalid input",
+                "Light Zenith and Light Azimuth must be numeric.",
+            )
+            self.light_zenith_var.set("{:.2f}".format(self.state_obj.light_zenith_deg))
+            self.light_azimuth_var.set("{:.2f}".format(self.state_obj.light_azimuth_deg))
+            return
+        self.state_obj.light_zenith_deg = z
+        self.state_obj.light_azimuth_deg = a
+        self.light_zenith_var.set("{:.2f}".format(z))
+        self.light_azimuth_var.set("{:.2f}".format(a))
+        self.workflow.save_runtime_settings()
+
+    def _flush_light_angles_before_shutdown(self):
+        raw_z = self.light_zenith_var.get().strip()
+        raw_a = self.light_azimuth_var.get().strip()
+        try:
+            z = float(raw_z) if raw_z else 0.0
+            a = float(raw_a) if raw_a else 0.0
+        except ValueError:
+            return
+        self.state_obj.light_zenith_deg = z
+        self.state_obj.light_azimuth_deg = a
+        self.workflow.save_runtime_settings()
+
+    def _set_light_here(self):
+        try:
+            zen = self.workflow.get_motor_angle_from_zero("zenith")
+            az = self.workflow.get_motor_angle_from_zero("azimuth")
+        except Exception as exc:
+            messagebox.showerror(
+                "Set Here unavailable",
+                "Could not read current sensor zenith/azimuth:\n{}".format(exc),
+            )
+            return
+        if zen < 0:
+            light_zen = abs(zen)
+            light_az = (az + 180.0) % 360.0
+        else:
+            light_zen = zen
+            light_az = az
+        self.state_obj.light_zenith_deg = light_zen
+        self.state_obj.light_azimuth_deg = light_az
+        self.light_zenith_var.set("{:.2f}".format(light_zen))
+        self.light_azimuth_var.set("{:.2f}".format(light_az))
+        self.workflow.save_runtime_settings()
 
     def _nudge_target(self, role, delta):
         raw = self.motor_target_vars[role].get().strip()
@@ -1209,6 +1286,7 @@ class GoniocontrolGUI(tk.Tk):
             self.busy_var.set("Shutting down")
             self.update_idletasks()
             try:
+                self._flush_light_angles_before_shutdown()
                 self.live_spectrum_service.stop()
                 self._shutdown_status_executor()
                 self.workflow.shutdown()

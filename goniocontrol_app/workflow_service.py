@@ -273,17 +273,23 @@ class WorkflowService:
             "outfile": self.state.outfile,
             "angles_file": str(self.state.angles_file),
             "reflectance_mode": self.state.reflectance_mode,
+            "light_zenith_deg": self.state.light_zenith_deg,
+            "light_azimuth_deg": self.state.light_azimuth_deg,
         }
         settings = self.persistence.load_runtime_settings(defaults)
         self.state.outfile = str(settings["outfile"])
         self.state.angles_file = Path(str(settings["angles_file"]))
         self.state.reflectance_mode = bool(settings["reflectance_mode"])
+        self.state.light_zenith_deg = float(settings["light_zenith_deg"])
+        self.state.light_azimuth_deg = float(settings["light_azimuth_deg"])
 
     def save_runtime_settings(self):
         self.persistence.save_runtime_settings(
             outfile=self.state.outfile,
             angles_file=self.state.angles_file,
             reflectance_mode=self.state.reflectance_mode,
+            light_zenith_deg=self.state.light_zenith_deg,
+            light_azimuth_deg=self.state.light_azimuth_deg,
         )
 
     def _load_polarization_calibration(self):

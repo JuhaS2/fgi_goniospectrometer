@@ -266,6 +266,8 @@ class PersistenceService:
                 )
             ),
             "reflectance_mode": bool(defaults.get("reflectance_mode", True)),
+            "light_zenith_deg": float(defaults.get("light_zenith_deg", 0.0)),
+            "light_azimuth_deg": float(defaults.get("light_azimuth_deg", 0.0)),
         }
         path = self._state_path("runtime_settings.json")
         legacy = self._legacy_path("runtime_settings.json")
@@ -295,13 +297,25 @@ class PersistenceService:
         if isinstance(mode_raw, bool):
             settings["reflectance_mode"] = mode_raw
 
+        zen_raw = data.get("light_zenith_deg")
+        if isinstance(zen_raw, (int, float)):
+            settings["light_zenith_deg"] = float(zen_raw)
+
+        az_raw = data.get("light_azimuth_deg")
+        if isinstance(az_raw, (int, float)):
+            settings["light_azimuth_deg"] = float(az_raw)
+
         return settings
 
-    def save_runtime_settings(self, outfile, angles_file, reflectance_mode):
+    def save_runtime_settings(
+        self, outfile, angles_file, reflectance_mode, light_zenith_deg, light_azimuth_deg
+    ):
         settings = {
             "outfile": str(self._resolve_outfile_path(outfile)),
             "angles_file": str((angles_file if angles_file.is_absolute() else self.workspace / angles_file).resolve()),
             "reflectance_mode": bool(reflectance_mode),
+            "light_zenith_deg": float(light_zenith_deg),
+            "light_azimuth_deg": float(light_azimuth_deg),
         }
         path = self._state_path("runtime_settings.json")
         path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
