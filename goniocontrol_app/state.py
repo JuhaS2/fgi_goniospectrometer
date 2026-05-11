@@ -56,6 +56,7 @@ class AppState:
     workspace: Path
     outfile: str = "Test00"
     reflectance_mode: bool = True
+    reflectance_mode_locked: bool = False
     angles_file: Path = field(
         default_factory=lambda: Path("example_sequences/PrincipalPlane_5deg.seq.txt")
     )

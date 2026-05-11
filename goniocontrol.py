@@ -96,8 +96,10 @@ class GoniocontrolGUI(tk.Tk):
         self.save_format_var = tk.StringVar(
             value="reflectance" if self.state_obj.reflectance_mode else "radiance"
         )
-        default_outfile = str((self.workspace / "Test00.pickle").resolve())
+        default_outfile = str((self.workspace / "Test00.json").resolve())
         self.outfile_var = tk.StringVar(value=default_outfile)
+        self.output_authors_var = tk.StringVar(value="")
+        self.output_target_name_var = tk.StringVar(value="")
         self.state_obj.outfile = default_outfile
         self.angle_var = tk.StringVar(
             value=str(self.workspace / "example_sequences/PrincipalPlane_5deg.seq.txt")
@@ -150,15 +152,18 @@ class GoniocontrolGUI(tk.Tk):
         status = ttk.Frame(notebook)
         motors = ttk.Frame(notebook)
         spectrometer = ttk.Frame(notebook)
+        output_file_tab = ttk.Frame(notebook)
         setup = ttk.Frame(notebook)
         notebook.add(status, text="System Status")
         notebook.add(motors, text="Motors")
         notebook.add(spectrometer, text="Spectrometer")
+        notebook.add(output_file_tab, text="Output file")
         notebook.add(setup, text="Measurement")
 
         self._build_status_panel(status)
         self._build_motors_panel(motors)
         self._build_spectrometer_panel(spectrometer)
+        self._build_output_file_panel(output_file_tab)
         self._build_setup_panel(setup)
         self.log(self.log_boot)
 
@@ -244,23 +249,65 @@ class GoniocontrolGUI(tk.Tk):
         frm = ttk.Frame(parent)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-        output_frame = self._build_output_file_frame(frm)
-        output_frame.grid(
-            row=0, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10)
-        )
-
         manual_frame = self._build_manual_measurement_frame(frm)
         manual_frame.grid(
-            row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10)
+            row=0, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 10)
         )
 
         sequence_frame = self._build_measurement_sequence_frame(frm)
         sequence_frame.grid(
-            row=2, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0)
+            row=1, column=0, columnspan=4, sticky="nsew", padx=2, pady=(0, 0)
         )
 
         frm.columnconfigure(1, weight=1)
         sequence_frame.columnconfigure(1, weight=1)
+
+    def _build_output_file_panel(self, parent):
+        frm = ttk.Frame(parent)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(3, weight=1)
+
+        output_frame = self._build_output_file_frame(frm)
+        output_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=(0, 10))
+
+        authors_row = ttk.Frame(frm)
+        authors_row.grid(row=1, column=0, sticky="ew", padx=2, pady=(0, 6))
+        authors_row.columnconfigure(1, weight=1)
+        ttk.Label(authors_row, text="Authors:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        ttk.Entry(authors_row, textvariable=self.output_authors_var).grid(
+            row=0, column=1, sticky="ew"
+        )
+
+        target_row = ttk.Frame(frm)
+        target_row.grid(row=2, column=0, sticky="ew", padx=2, pady=(0, 8))
+        target_row.columnconfigure(1, weight=1)
+        ttk.Label(target_row, text="Target name:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        ttk.Entry(target_row, textvariable=self.output_target_name_var).grid(
+            row=0, column=1, sticky="ew"
+        )
+
+        desc_frame = ttk.LabelFrame(frm, text="Target description")
+        desc_frame.grid(row=3, column=0, sticky="nsew", padx=2, pady=0)
+        desc_frame.columnconfigure(0, weight=1)
+        desc_frame.rowconfigure(0, weight=1)
+        self.output_target_description_text = tk.Text(
+            desc_frame, wrap=tk.WORD, undo=True
+        )
+        desc_scroll = ttk.Scrollbar(
+            desc_frame,
+            orient=tk.VERTICAL,
+            command=self.output_target_description_text.yview,
+        )
+        self.output_target_description_text.configure(yscrollcommand=desc_scroll.set)
+        self.output_target_description_text.grid(
+            row=0, column=0, sticky="nsew", padx=(4, 0), pady=4
+        )
+        desc_scroll.grid(row=0, column=1, sticky="ns", padx=(0, 4), pady=4)
 
     def _build_spectrometer_panel(self, parent):
         frm = ttk.Frame(parent)
@@ -340,20 +387,22 @@ class GoniocontrolGUI(tk.Tk):
         format_row = ttk.Frame(output_frame)
         format_row.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
         ttk.Label(format_row, text="Save format:").grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(
+        self._reflectance_save_radio = ttk.Radiobutton(
             format_row,
             text="reflectance",
             value="reflectance",
             variable=self.save_format_var,
             command=self._toggle_mode,
-        ).grid(row=0, column=1, padx=(10, 10))
-        ttk.Radiobutton(
+        )
+        self._reflectance_save_radio.grid(row=0, column=1, padx=(10, 10))
+        self._radiance_save_radio = ttk.Radiobutton(
             format_row,
             text="radiance",
             value="radiance",
             variable=self.save_format_var,
             command=self._toggle_mode,
-        ).grid(row=0, column=2)
+        )
+        self._radiance_save_radio.grid(row=0, column=2)
         output_frame.columnconfigure(0, weight=1)
         return output_frame
 
@@ -658,6 +707,7 @@ class GoniocontrolGUI(tk.Tk):
         )
         self.light_zenith_var.set("{:.2f}".format(self.state_obj.light_zenith_deg))
         self.light_azimuth_var.set("{:.2f}".format(self.state_obj.light_azimuth_deg))
+        self._update_reflectance_save_controls()
         self._dark_collected_at = self.state_obj.calibration.dark_collected_at
         self._white_collected_at = self.state_obj.calibration.white_collected_at
         if self._dark_collected_at is None:
@@ -729,7 +779,7 @@ class GoniocontrolGUI(tk.Tk):
 
     def _browse_output_file(self):
         current = Path(
-            self.outfile_var.get().strip() or (self.workspace / "Test00.pickle")
+            self.outfile_var.get().strip() or (self.workspace / "Test00.json")
         )
         selected = filedialog.asksaveasfilename(
             title="Select output file",
@@ -737,14 +787,14 @@ class GoniocontrolGUI(tk.Tk):
                 current.parent if current.parent.exists() else self.workspace
             ),
             initialfile=current.name,
-            defaultextension=".pickle",
-            filetypes=[("Pickle files", "*.pickle"), ("All files", "*.*")],
+            defaultextension=".json",
+            filetypes=[("JSON datasets", "*.json"), ("All files", "*.*")],
         )
         if not selected:
             return
         selected_path = Path(selected)
-        if selected_path.suffix.lower() != ".pickle":
-            selected_path = selected_path.with_suffix(".pickle")
+        if selected_path.suffix.lower() != ".json":
+            selected_path = selected_path.with_suffix(".json")
         outfile = str(selected_path.resolve())
         self.outfile_var.set(outfile)
         self.controller.run_async(
@@ -804,7 +854,19 @@ class GoniocontrolGUI(tk.Tk):
                 "Open file failed", "Could not open angles file:\n{}".format(exc)
             )
 
+    def _update_reflectance_save_controls(self):
+        state = "disabled" if self.state_obj.reflectance_mode_locked else "normal"
+        if getattr(self, "_reflectance_save_radio", None) is not None:
+            self._reflectance_save_radio.configure(state=state)
+        if getattr(self, "_radiance_save_radio", None) is not None:
+            self._radiance_save_radio.configure(state=state)
+
     def _toggle_mode(self):
+        if self.state_obj.reflectance_mode_locked:
+            self.save_format_var.set(
+                "reflectance" if self.state_obj.reflectance_mode else "radiance"
+            )
+            return
         # Keep both GUI and backend mode aligned.
         desired = self.save_format_var.get() == "reflectance"
         if self.state_obj.reflectance_mode != desired:
@@ -1127,6 +1189,7 @@ class GoniocontrolGUI(tk.Tk):
             return
         self._update_device_status_labels()
         self._refresh_collection_status_labels()
+        self._update_reflectance_save_controls()
         self._submit_spectrometer_probe()
         self.after(2000, self._refresh_device_status)
 

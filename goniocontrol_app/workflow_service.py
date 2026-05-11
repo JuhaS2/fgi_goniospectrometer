@@ -227,7 +227,32 @@ class WorkflowService:
             "DriftDC.npy"
         )
         self.state.outfile = self.persistence.load_outfile_name(self.state.outfile)
-        self.state.data = self.persistence.load_existing_dataset(self.state.outfile)
+        self.state.data = []
+        self.state.reflectance_mode_locked = False
+        try:
+            doc = self.persistence.load_dataset_document(self.state.outfile)
+        except ValueError as exc:
+            doc = None
+            msg = "Dataset load failed: {}".format(exc)
+            self.state.runtime_notice = (
+                "{}{}{}".format(self.state.runtime_notice, "\n", msg)
+                if self.state.runtime_notice
+                else msg
+            )
+        if doc is not None:
+            try:
+                self.state.data = self.persistence.measurements_from_document(doc)
+                self.persistence.apply_dataset_metadata_to_state(doc, self.state)
+                self.save_runtime_settings()
+            except ValueError as exc:
+                self.state.data = []
+                self.state.reflectance_mode_locked = False
+                msg = "Dataset load failed: {}".format(exc)
+                self.state.runtime_notice = (
+                    "{}{}{}".format(self.state.runtime_notice, "\n", msg)
+                    if self.state.runtime_notice
+                    else msg
+                )
         try:
             self.state.angles = self.persistence.read_angles(self.state.angles_file)
         except FileNotFoundError:
@@ -310,9 +335,9 @@ class WorkflowService:
             )
 
     def new_dataset(self, outfile):
-        candidate = Path((outfile or "").strip() or "Test00.pickle")
-        if candidate.suffix.lower() != ".pickle":
-            candidate = candidate.with_suffix(".pickle")
+        candidate = Path((outfile or "").strip() or "Test00.json")
+        if candidate.suffix.lower() != ".json":
+            candidate = candidate.with_suffix(".json")
         if not candidate.is_absolute():
             candidate = self.state.workspace / candidate
         self.state.outfile = str(candidate.resolve())
@@ -320,6 +345,7 @@ class WorkflowService:
         self.save_runtime_settings()
         os.makedirs(Path(self.state.outfile).parent, exist_ok=True)
         self.state.data = []
+        self.state.reflectance_mode_locked = False
 
     def restore_spectrometer(self):
         self.spectrometer.restore()
@@ -566,6 +592,8 @@ class WorkflowService:
                 self.motors.move_to_zero(role, self.state.devices.positions_zero[role])
 
     def toggle_mode(self):
+        if self.state.reflectance_mode_locked:
+            return self.state.reflectance_mode
         self.state.reflectance_mode = not self.state.reflectance_mode
         self.save_runtime_settings()
         return self.state.reflectance_mode
@@ -619,10 +647,24 @@ class WorkflowService:
             self._apply_opt()
             ss, rr = self._measure_at_angle(repeats=repeats)
             payload = rr if self.state.reflectance_mode else ss
-            self.state.data.append((sz, sa00, ze, az, be, payload, wwa, wwb))
-            self.persistence.checkpoint_dataset(self.state.outfile, self.state.data)
+            lz = float(self.state.light_zenith_deg)
+            la = float(self.state.light_azimuth_deg)
+            self.state.data.append((sz, sa00, ze, az, be, payload, wwa, wwb, lz, la))
+            self.persistence.checkpoint_dataset(
+                self.state.outfile,
+                self.state.data,
+                self.state.reflectance_mode,
+                self.state.devices.npols,
+            )
+            if self.state.data:
+                self.state.reflectance_mode_locked = True
         self.zero_all()
-        self.persistence.checkpoint_dataset(self.state.outfile, self.state.data)
+        self.persistence.checkpoint_dataset(
+            self.state.outfile,
+            self.state.data,
+            self.state.reflectance_mode,
+            self.state.devices.npols,
+        )
 
     def shutdown(self):
         self.persistence.export_text(self.state)

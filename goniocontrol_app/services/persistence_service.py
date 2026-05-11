@@ -1,16 +1,44 @@
 import json
-import pickle
+import math
 import re
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from os import environ
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from goniocontrol_app.errors import PreconditionError
 from goniocontrol_app.state import AngleRow, AppState
+
+DATASET_FORMAT_VERSION = 1
+DATASET_DESCRIPTION = (
+    "This dataset was collected with the FGI laboratory goniometer. "
+    "It contains reflectance factors or radiances measured at different combinations "
+    "of sensor and illumination geometry. When polarizing optics are used, "
+    "polarization settings may also vary."
+)
+
+
+def _spectrum_quantity_label(reflectance_mode: bool) -> str:
+    return "reflectance_factor" if reflectance_mode else "radiance"
+
+
+def _polarization_measurement_mode_label(npols: int) -> str:
+    # Rule matches WorkflowService.connect_devices: npols > 1 implies polarized acquisition path.
+    return "Yes" if npols > 1 else "No"
+
+
+def _round_significant_float(x: float, ndigits: int = 5) -> float:
+    if x == 0.0:
+        return 0.0
+    if not math.isfinite(x):
+        return float(x)
+    return float(
+        round(x, ndigits - 1 - int(math.floor(math.log10(abs(x)))))
+    )
 
 
 class PersistenceService:
@@ -77,8 +105,11 @@ class PersistenceService:
         path = Path(raw)
         if not path.is_absolute():
             path = self.workspace / path
-        if path.suffix.lower() != ".pickle":
-            path = path.with_suffix(".pickle")
+        suf = path.suffix.lower()
+        if suf in (".pickle", ".pkl"):
+            path = path.with_suffix(".json")
+        elif suf != ".json":
+            path = path.with_suffix(".json")
         return path.resolve()
 
     def read_angles(self, angle_file):
@@ -320,18 +351,186 @@ class PersistenceService:
         path = self._state_path("runtime_settings.json")
         path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
-    def load_existing_dataset(self, outfile):
-        pickle_path = self._resolve_outfile_path(outfile)
-        if not pickle_path.exists():
-            return []
-        with pickle_path.open("rb") as handle:
-            return pickle.load(handle)
+    def load_dataset_document(self, outfile) -> Optional[Dict[str, Any]]:
+        path = self._resolve_outfile_path(outfile)
+        if not path.exists():
+            return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "Dataset file {} is not valid UTF-8 JSON.".format(path)
+            ) from exc
+        if not isinstance(doc, dict):
+            raise ValueError("Dataset file {} must contain a JSON object.".format(path))
+        return doc
 
-    def checkpoint_dataset(self, outfile, data):
-        pickle_path = self._resolve_outfile_path(outfile)
-        pickle_path.parent.mkdir(parents=True, exist_ok=True)
-        with pickle_path.open("wb") as handle:
-            pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    def measurements_from_document(self, doc: Dict[str, Any]) -> List[Any]:
+        ver = doc.get("goniocontrol_dataset_format_version")
+        if ver != DATASET_FORMAT_VERSION:
+            raise ValueError(
+                "Unsupported goniocontrol_dataset_format_version {!r} (expected {}).".format(
+                    ver, DATASET_FORMAT_VERSION
+                )
+            )
+        measurements = doc.get("measurements")
+        if measurements is None:
+            raise ValueError("Dataset document missing 'measurements' array.")
+        if not isinstance(measurements, list):
+            raise ValueError("Dataset 'measurements' must be an array.")
+        if len(measurements) == 0:
+            return []
+        info = doc.get("dataset_info") or {}
+        pol_mode = info.get("polarization_measurement_mode")
+        if pol_mode not in ("Yes", "No"):
+            raise ValueError(
+                "dataset_info.polarization_measurement_mode must be 'Yes' or 'No'."
+            )
+        pol_yes = pol_mode == "Yes"
+        return [self._measurement_record_to_tuple(rec, pol_yes) for rec in measurements]
+
+    def apply_dataset_metadata_to_state(self, doc: Dict[str, Any], state: AppState) -> None:
+        measurements = doc.get("measurements") or []
+        if not measurements:
+            state.reflectance_mode_locked = False
+            return
+        info = doc.get("dataset_info") or {}
+        sq = info.get("spectrum_quantity")
+        if sq == "reflectance_factor":
+            state.reflectance_mode = True
+        elif sq == "radiance":
+            state.reflectance_mode = False
+        else:
+            raise ValueError(
+                "dataset_info.spectrum_quantity must be 'reflectance_factor' or 'radiance'."
+            )
+        state.reflectance_mode_locked = True
+
+    def load_existing_dataset(self, outfile):
+        try:
+            doc = self.load_dataset_document(outfile)
+        except ValueError:
+            raise
+        if doc is None:
+            return []
+        return self.measurements_from_document(doc)
+
+    def checkpoint_dataset(
+        self,
+        outfile,
+        data,
+        reflectance_mode: bool,
+        npols: int,
+    ):
+        path = self._resolve_outfile_path(outfile)
+        expected_sq = _spectrum_quantity_label(reflectance_mode)
+        expected_pol = _polarization_measurement_mode_label(npols)
+
+        existing_doc = None
+        if path.exists():
+            try:
+                existing_doc = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                raise PreconditionError(
+                    "Cannot append: dataset file {} exists but is not valid JSON.".format(
+                        path
+                    )
+                )
+
+        if existing_doc:
+            info = existing_doc.get("dataset_info") or {}
+            psq = info.get("spectrum_quantity")
+            if psq is not None and psq != expected_sq:
+                raise PreconditionError(
+                    "Dataset file spectrum_quantity is {!r} but current mode is {!r}.".format(
+                        psq, expected_sq
+                    )
+                )
+            ppol = info.get("polarization_measurement_mode")
+            if ppol is not None and ppol != expected_pol:
+                raise PreconditionError(
+                    "Dataset file polarization_measurement_mode is {!r} but current hardware mode is {!r}.".format(
+                        ppol, expected_pol
+                    )
+                )
+
+        measurements_json = [
+            self._measurement_tuple_to_record(row, expected_pol == "Yes")
+            for row in data
+        ]
+
+        doc = {
+            "goniocontrol_dataset_format_version": DATASET_FORMAT_VERSION,
+            "dataset_info": {
+                "dataset_description": DATASET_DESCRIPTION,
+                "spectrum_quantity": expected_sq,
+                "polarization_measurement_mode": expected_pol,
+                "dataset_last_updated_utc": datetime.now(timezone.utc).isoformat(),
+            },
+            "measurements": measurements_json,
+        }
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+    def _spectrum_ndarray_to_json_nested(self, spec: Any) -> Any:
+        arr = np.asarray(spec, dtype=float)
+        if arr.ndim == 0:
+            return _round_significant_float(float(arr), 5)
+        return [self._spectrum_ndarray_to_json_nested(arr[idx]) for idx in range(arr.shape[0])]
+
+    def _json_nested_to_spectrum_ndarray(self, obj: Any) -> np.ndarray:
+        if isinstance(obj, list):
+            rows = [self._json_nested_to_spectrum_ndarray(item) for item in obj]
+            return np.array(rows, dtype=float)
+        return np.asarray(float(obj), dtype=float)
+
+    def _measurement_tuple_to_record(self, row: Tuple[Any, ...], polarization_yes: bool) -> Dict[str, Any]:
+        sz, sa00, ze, az, be, spec, _wwa, _wwb, lz, la = row
+        rec = {
+            "sensor_zenith_angle_deg": float(ze),
+            "sensor_azimuth_angle_deg": float(az),
+            "sample_rotation_angle_deg": float(be),
+            "light_zenith_angle_deg": float(lz),
+            "light_azimuth_angle_deg": float(la),
+            "spectrum": self._spectrum_ndarray_to_json_nested(spec),
+        }
+        if polarization_yes:
+            rec["sensor_polarizer_angle_deg"] = float(sz)
+            rec["lamp_polarizer_angle_deg"] = float(sa00)
+        return rec
+
+    def _measurement_record_to_tuple(self, rec: Dict[str, Any], polarization_yes: bool) -> Tuple[Any, ...]:
+        required = (
+            "sensor_zenith_angle_deg",
+            "sensor_azimuth_angle_deg",
+            "sample_rotation_angle_deg",
+            "light_zenith_angle_deg",
+            "light_azimuth_angle_deg",
+            "spectrum",
+        )
+        for key in required:
+            if key not in rec:
+                raise ValueError("Measurement record missing {!r}.".format(key))
+
+        if polarization_yes:
+            if "sensor_polarizer_angle_deg" not in rec or "lamp_polarizer_angle_deg" not in rec:
+                raise ValueError(
+                    "Measurement record missing polarizer angles for polarization Measurement mode Yes."
+                )
+            sz = float(rec["sensor_polarizer_angle_deg"])
+            sa00 = float(rec["lamp_polarizer_angle_deg"])
+        else:
+            sz = 0.0
+            sa00 = 0.0
+
+        ze = float(rec["sensor_zenith_angle_deg"])
+        az = float(rec["sensor_azimuth_angle_deg"])
+        be = float(rec["sample_rotation_angle_deg"])
+        lz = float(rec["light_zenith_angle_deg"])
+        la = float(rec["light_azimuth_angle_deg"])
+        spec = self._json_nested_to_spectrum_ndarray(rec["spectrum"])
+        return (sz, sa00, ze, az, be, spec, 0.0, 1.0, lz, la)
 
     def export_text(self, state):
         outfile = self._resolve_outfile_path(state.outfile)
