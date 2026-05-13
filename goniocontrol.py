@@ -38,9 +38,9 @@ class GoniocontrolGUI(tk.Tk):
         ("sample", "Sample Azimuth"),
     )
     MOTOR_LIMITS = {
-        "zenith": (-90.0, 90.0),
-        "azimuth": (-360.0, 360.0),
-        "sample": (-360.0, 360.0),
+        "zenith": (-95.0, 95.0),
+        "azimuth": (-365.0, 365.0),
+        "sample": (-365.0, 365.0),
     }
 
     def __init__(self):
@@ -810,9 +810,7 @@ class GoniocontrolGUI(tk.Tk):
         if raw:
             current = Path(raw)
             initialdir = (
-                str(current.parent)
-                if current.parent.exists()
-                else str(self.workspace)
+                str(current.parent) if current.parent.exists() else str(self.workspace)
             )
             initialfile = current.name
         else:
@@ -821,9 +819,7 @@ class GoniocontrolGUI(tk.Tk):
                 data_dir.mkdir(parents=True, exist_ok=True)
             except OSError:
                 data_dir = self.workspace
-            initialdir = (
-                str(data_dir) if data_dir.is_dir() else str(self.workspace)
-            )
+            initialdir = str(data_dir) if data_dir.is_dir() else str(self.workspace)
             initialfile = ""
         selected = filedialog.asksaveasfilename(
             title="Select output file",
