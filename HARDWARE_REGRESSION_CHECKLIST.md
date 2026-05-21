@@ -23,7 +23,7 @@ Use this checklist on Raspberry Pi + instrument to validate parity with legacy C
 - [ ] Zero All returns axes to zero positions.
 - [ ] Measure creates/updates `<outfile>.json` incrementally (UTF-8 dataset document).
 - [ ] Measure final export writes `<outfile>.txt`.
-- [ ] Reflectance/radiance mode matches `dataset_info.spectrum_quantity` in the JSON file; toggle is disabled once the dataset file locks the mode (existing file or after first saved spectrum).
+- [ ] Reflectance/radiance mode matches `spectrum_quantity` in the JSON file (root field in format v2, or `dataset_info.spectrum_quantity` in legacy v1); toggle is disabled once the dataset file locks the mode (existing file or after first saved spectrum).
 - [ ] Legacy fallback: with only repo-root calibration files present, startup loads them and migrates copies to runtime state directory.
 
 ## Reliability

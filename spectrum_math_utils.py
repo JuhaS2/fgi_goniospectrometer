@@ -322,6 +322,9 @@ def MakeStokesIQUV(subdata, DC, driftDC, VDCC, AA4):  # DUPLICXATE???
 
 
 def MakeI(subdata, DC, driftDC, VDCC, Vwl1=350, Vwl2=1000):
+    """Converts spectrometer raw DN spectrum to internal dark-current-corrected pseudo-radiances. (radiance = c[wl]*I)
+    Basically to radiances as the spectrometer optical fibre receives them, but this does not yet include correction for stray light in laboratory.
+    """
 
     BB = np.zeros((len(subdata)))
     I = np.zeros((1, Nwl))
@@ -331,9 +334,9 @@ def MakeI(subdata, DC, driftDC, VDCC, Vwl1=350, Vwl2=1000):
             ret, wga, spectrum, driftM = dat
             if iw == 0:
                 print(VDCC, driftM, driftDC)
-            if iw <= (Vwl2 - Vwl1):
+            if iw <= (Vwl2 - Vwl1):  # VNIR sensor of the spectrometer
                 BB[i] = spectrum[iw] - DC[iw] + VDCC + (driftM - driftDC)
-            else:
+            else:  # SWIR sensors of the spectrometer
                 BB[i] = spectrum[iw]
             BB[i] = np.maximum(0.0, BB[i])  # NO negative values
             i += 1

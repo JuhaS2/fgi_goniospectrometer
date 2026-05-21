@@ -1,2 +1,3 @@
 __pycache__/
 goniocontrol_app/__pycache__/
+goniocontrol_app/services/__pycache__/persistence_service.cpython-313.pyc

@@ -14,7 +14,8 @@ import numpy as np
 from goniocontrol_app.errors import PreconditionError
 from goniocontrol_app.state import AngleRow, AppState
 
-DATASET_FORMAT_VERSION = 1
+DATASET_FORMAT_VERSION = 2
+# v1 used nested "dataset_info" and a "measurements" array; still accepted when loading.
 DATASET_DESCRIPTION = (
     "This dataset was collected with the FGI laboratory goniometer. "
     "It contains reflectance factors or radiances measured at different combinations "
@@ -22,7 +23,18 @@ DATASET_DESCRIPTION = (
     "polarization settings may also vary."
 )
 
-# One spectral band per integer nm; spectra in measurements align with this axis.
+# Metadata fields stored at JSON root (format v2); v1 keeps the same keys under "dataset_info".
+DATASET_METADATA_FIELD_KEYS = (
+    "dataset_description",
+    "spectrum_quantity",
+    "polarization_measurement_mode",
+    "dataset_last_updated_utc",
+    "authors",
+    "target_name",
+    "target_description",
+)
+
+# One spectral band per integer nm; spectra in the data array align with this axis.
 DATASET_WAVELENGTHS_NM = list(range(350, 2501))
 
 
@@ -41,6 +53,50 @@ def _dataset_info_string_field(value: Any) -> str:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+def _dataset_format_version_read(doc: Dict[str, Any]) -> int:
+    ver = doc.get("goniocontrol_dataset_format_version")
+    if ver not in (1, 2):
+        raise ValueError(
+            "Unsupported goniocontrol_dataset_format_version {!r} (expected 1 or 2).".format(ver)
+        )
+    return int(ver)
+
+
+def _measurements_array_from_document(doc: Dict[str, Any], ver: int) -> List[Any]:
+    if ver == 2:
+        key, label = "data", "'data'"
+    else:
+        key, label = "measurements", "'measurements'"
+    measurements = doc.get(key)
+    if measurements is None:
+        raise ValueError("Dataset document missing {} array.".format(label))
+    if not isinstance(measurements, list):
+        raise ValueError("Dataset {} must be an array.".format(label))
+    return measurements
+
+
+def _dataset_metadata_from_document(doc: Dict[str, Any], ver: int) -> Dict[str, Any]:
+    if ver == 2:
+        return {k: doc.get(k) for k in DATASET_METADATA_FIELD_KEYS}
+    info_raw = doc.get("dataset_info")
+    return info_raw if isinstance(info_raw, dict) else {}
+
+
+def _merged_metadata_from_existing_doc(existing_doc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not existing_doc or not isinstance(existing_doc, dict):
+        return {}
+    ver = existing_doc.get("goniocontrol_dataset_format_version")
+    if ver == 1 and isinstance(existing_doc.get("dataset_info"), dict):
+        return dict(existing_doc["dataset_info"])
+    if ver == 2:
+        return {
+            k: existing_doc[k]
+            for k in DATASET_METADATA_FIELD_KEYS
+            if k in existing_doc
+        }
+    return {}
 
 
 def _round_significant_float(x: float, ndigits: int = 5) -> float:
@@ -383,39 +439,29 @@ class PersistenceService:
         return doc
 
     def measurements_from_document(self, doc: Dict[str, Any]) -> List[Any]:
-        ver = doc.get("goniocontrol_dataset_format_version")
-        if ver != DATASET_FORMAT_VERSION:
-            raise ValueError(
-                "Unsupported goniocontrol_dataset_format_version {!r} (expected {}).".format(
-                    ver, DATASET_FORMAT_VERSION
-                )
-            )
-        measurements = doc.get("measurements")
-        if measurements is None:
-            raise ValueError("Dataset document missing 'measurements' array.")
-        if not isinstance(measurements, list):
-            raise ValueError("Dataset 'measurements' must be an array.")
+        ver = _dataset_format_version_read(doc)
+        measurements = _measurements_array_from_document(doc, ver)
         if len(measurements) == 0:
             return []
-        info = doc.get("dataset_info") or {}
+        info = _dataset_metadata_from_document(doc, ver)
         pol_mode = info.get("polarization_measurement_mode")
         if pol_mode not in ("Yes", "No"):
             raise ValueError(
-                "dataset_info.polarization_measurement_mode must be 'Yes' or 'No'."
+                "polarization_measurement_mode must be 'Yes' or 'No'."
             )
         pol_yes = pol_mode == "Yes"
         return [self._measurement_record_to_tuple(rec, pol_yes) for rec in measurements]
 
     def apply_dataset_metadata_to_state(self, doc: Dict[str, Any], state: AppState) -> None:
-        info_raw = doc.get("dataset_info")
-        info = info_raw if isinstance(info_raw, dict) else {}
+        ver = _dataset_format_version_read(doc)
+        info = _dataset_metadata_from_document(doc, ver)
         state.authors = _dataset_info_string_field(info.get("authors"))
         state.target_name = _dataset_info_string_field(info.get("target_name"))
         state.target_description = _dataset_info_string_field(
             info.get("target_description")
         )
 
-        measurements = doc.get("measurements") or []
+        measurements = _measurements_array_from_document(doc, ver)
         sq = info.get("spectrum_quantity")
 
         if measurements:
@@ -425,7 +471,7 @@ class PersistenceService:
                 state.reflectance_mode = False
             else:
                 raise ValueError(
-                    "dataset_info.spectrum_quantity must be 'reflectance_factor' or 'radiance'."
+                    "spectrum_quantity must be 'reflectance_factor' or 'radiance'."
                 )
             state.reflectance_mode_locked = True
             return
@@ -440,7 +486,7 @@ class PersistenceService:
             state.reflectance_mode_locked = False
         else:
             raise ValueError(
-                "dataset_info.spectrum_quantity must be 'reflectance_factor' or 'radiance'."
+                "spectrum_quantity must be 'reflectance_factor' or 'radiance'."
             )
 
     def load_existing_dataset(self, outfile):
@@ -482,7 +528,13 @@ class PersistenceService:
                 )
 
         if existing_doc:
-            info = existing_doc.get("dataset_info") or {}
+            try:
+                ev = _dataset_format_version_read(existing_doc)
+            except ValueError:
+                raise PreconditionError(
+                    "Cannot append: dataset file has unsupported goniocontrol_dataset_format_version."
+                )
+            info = _dataset_metadata_from_document(existing_doc, ev)
             psq = info.get("spectrum_quantity")
             if psq is not None and psq != expected_sq:
                 raise PreconditionError(
@@ -514,10 +566,8 @@ class PersistenceService:
                 )
             )
 
-        merged_info: Dict[str, Any] = {}
-        if existing_doc and isinstance(existing_doc.get("dataset_info"), dict):
-            merged_info = dict(existing_doc["dataset_info"])
-        merged_info.update(
+        merged_meta = _merged_metadata_from_existing_doc(existing_doc)
+        merged_meta.update(
             {
                 "dataset_description": DATASET_DESCRIPTION,
                 "spectrum_quantity": expected_sq,
@@ -529,12 +579,12 @@ class PersistenceService:
             }
         )
 
-        doc = {
+        doc: Dict[str, Any] = {
             "goniocontrol_dataset_format_version": DATASET_FORMAT_VERSION,
-            "wavelengths_nm": wl_marker,
-            "dataset_info": merged_info,
-            "measurements": measurements_json,
         }
+        doc.update(merged_meta)
+        doc["wavelengths_nm"] = wl_marker
+        doc["data"] = measurements_json
 
         path.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(doc, indent=2)
