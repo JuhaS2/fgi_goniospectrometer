@@ -25,7 +25,7 @@ from goniocontrol_app.services.mock_services import (
 )
 from goniocontrol_app.services.live_spectrum_service import LiveSpectrumService
 from goniocontrol_app.services.persistence_service import PersistenceService
-from goniocontrol_app.state import DEFAULT_SPECTRUM_AVERAGES, AppState
+from goniocontrol_app.state import DEFAULT_SEQUENCE_REPEATS, AppState
 from goniocontrol_app.workflow_service import WorkflowService
 
 DEFAULT_OUTPUT_DATA_DIR = Path("/home/pi/Desktop/Data")
@@ -109,7 +109,7 @@ class GoniocontrolGUI(tk.Tk):
             value=str(self.workspace / "example_sequences/PrincipalPlane_5deg.seq.txt")
         )
         self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
-        self.repeats_var = tk.StringVar(value=str(DEFAULT_SPECTRUM_AVERAGES))
+        self.repeats_var = tk.StringVar(value=str(DEFAULT_SEQUENCE_REPEATS))
         self.sensor_zenith_var = tk.StringVar(value="0")
         self.optimize_status_var = tk.StringVar(value="Not optimized yet!")
         self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
@@ -1194,7 +1194,7 @@ class GoniocontrolGUI(tk.Tk):
         if not self._ensure_output_dataset_selected():
             return
         self._push_output_metadata_to_state()
-        repeats = int(self.repeats_var.get() or str(DEFAULT_SPECTRUM_AVERAGES))
+        repeats = int(self.repeats_var.get() or str(DEFAULT_SEQUENCE_REPEATS))
         self.controller.run_measure(repeats)
 
     def _measure_single_current_position(self):
@@ -1231,7 +1231,7 @@ class GoniocontrolGUI(tk.Tk):
         )
         self.state_obj.angles = [angle_row]
 
-        repeats = int(self.repeats_var.get() or str(DEFAULT_SPECTRUM_AVERAGES))
+        repeats = int(self.repeats_var.get() or str(DEFAULT_SEQUENCE_REPEATS))
         self.controller.run_measure(
             repeats,
             label="Manual single spectrum",

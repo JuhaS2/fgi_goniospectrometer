@@ -785,7 +785,9 @@ class WorkflowService:
             )
             rr = MakeRef(ss, self.state.calibration.white)
         else:
-            subdata = self._take_i(repeats=repeats, source="measurement")
+            subdata = []
+            for _ in range(max(1, int(repeats))):
+                subdata.extend(self._take_i(source="measurement"))
             ss = (
                 MakeI(subdata, self._dc(), self._drift(), self._vdcc)
                 - self._dc_remainder()
@@ -813,7 +815,9 @@ class WorkflowService:
         self.lcc.set_retardance(0)
         for wg in [0, 45, 90, 135]:
             self._move_sensor_polarizer(wg)
-            header, spectrum = self.spectrometer.read_single()
+            header, spectrum = self.spectrometer.read_average(
+                DEFAULT_SPECTRUM_AVERAGES
+            )
             self._publish_spectrum(header, spectrum, source)
             subdata.append((0.0, wg, spectrum, header[22]))
         self._move_sensor_polarizer(0)
@@ -829,7 +833,9 @@ class WorkflowService:
                 self._move_sensor_polarizer(wg)
                 for ret in rets:
                     self.lcc.set_retardance(float(ret))
-                    header, spectrum = self.spectrometer.read_single()
+                    header, spectrum = self.spectrometer.read_average(
+                        DEFAULT_SPECTRUM_AVERAGES
+                    )
                     self._publish_spectrum(header, spectrum, source)
                     subdata.append((float(ret), wg, lamp, spectrum, header[22]))
         self._move_sensor_polarizer(0)

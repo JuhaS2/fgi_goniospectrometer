@@ -4,6 +4,8 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
+from goniocontrol_app.state import DEFAULT_SPECTRUM_AVERAGES
+
 
 class LiveSpectrumService:
     def __init__(
@@ -86,7 +88,9 @@ class LiveSpectrumService:
             # print("DEBUG: LiveSpectrumService poll #{} starting".format(poll_id))
             self._maybe_reconnect_before_poll(poll_id)
             try:
-                header, spectrum = self.spectrometer.read_single()
+                header, spectrum = self.spectrometer.read_average(
+                    DEFAULT_SPECTRUM_AVERAGES
+                )
                 elapsed_s = max(0.001, time.perf_counter() - t0)
                 self._publish(header, spectrum, "idle_poll")
                 tuned = elapsed_s * self.interval_factor
@@ -138,7 +142,7 @@ class LiveSpectrumService:
                     exc,
                 )
             )
-            # Swallow: the upcoming read_single() will raise too and the
+            # Swallow: the upcoming read_average() will raise too and the
             # error path below will keep us in backoff until the next try.
             pass
 

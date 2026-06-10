@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+DEFAULT_SEQUENCE_REPEATS = 1
 DEFAULT_SPECTRUM_AVERAGES = 10
 
 AngleRow = Tuple[float, float, float, float, float, float, float]
