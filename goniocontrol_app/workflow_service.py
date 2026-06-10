@@ -7,6 +7,8 @@ from typing import Any, Callable, Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
+from goniocontrol_app.state import DEFAULT_SPECTRUM_AVERAGES
+
 try:
     from spectrum_math_utils import (
         MakeAA3,
@@ -660,7 +662,7 @@ class WorkflowService:
     def view_snapshot(self):
         self._require_white()
         if self.state.devices.npols == 1:
-            vdata = self._take_i(repeats=1)
+            vdata = self._take_i()
             vi = (
                 MakeI(vdata, self._dc(), self._drift(), self._vdcc)
                 - self._dc_remainder()
@@ -800,7 +802,7 @@ class WorkflowService:
             # Live-view callbacks must never impact measurement workflows.
             pass
 
-    def _take_i(self, repeats=1, source="workflow"):
+    def _take_i(self, repeats=DEFAULT_SPECTRUM_AVERAGES, source="workflow"):
         header, spectrum = self.spectrometer.read_average(repeats)
         self._publish_spectrum(header, spectrum, source)
         drift = header[22]
