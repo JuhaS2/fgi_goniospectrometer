@@ -29,6 +29,7 @@ from goniocontrol_app.state import AppState
 from goniocontrol_app.workflow_service import WorkflowService
 
 DEFAULT_OUTPUT_DATA_DIR = Path("/home/pi/Desktop/Data")
+BASE_WINDOW_TITLE = "Goniocontrol GUI"
 
 
 class GoniocontrolGUI(tk.Tk):
@@ -45,7 +46,7 @@ class GoniocontrolGUI(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("Goniocontrol GUI")
+        self.title(BASE_WINDOW_TITLE)
         self.geometry("800x416")
         self.workspace = Path(__file__).resolve().parent
 
@@ -73,7 +74,9 @@ class GoniocontrolGUI(tk.Tk):
         self.workflow = WorkflowService(
             self.state_obj, persistence, motors, spectrometer, lcc
         )
-        self.controller = GuiController(self.workflow, self.log, self._set_busy)
+        self.controller = GuiController(
+            self.workflow, self.log, self._set_busy, self._set_window_status
+        )
         self._shutting_down = False
         self.live_spectrum_service = LiveSpectrumService(
             spectrometer=spectrometer,
@@ -605,6 +608,15 @@ class GoniocontrolGUI(tk.Tk):
 
     def _set_busy(self, busy):
         self.after(0, lambda: self.busy_var.set("Busy" if busy else "Idle"))
+
+    def _set_window_status(self, suffix):
+        def apply():
+            if suffix:
+                self.title("{} — {}".format(BASE_WINDOW_TITLE, suffix))
+            else:
+                self.title(BASE_WINDOW_TITLE)
+
+        self.after(0, apply)
 
     def _startup_refresh(self):
         self.controller.run_async(
@@ -1219,17 +1231,11 @@ class GoniocontrolGUI(tk.Tk):
         )
         self.state_obj.angles = [angle_row]
 
-        def run_manual_measure():
-            try:
-                self.workflow.measure_sequence(
-                    repeats=1,
-                    progress=self.log,
-                    should_cancel=self.controller._cancel_event.is_set,
-                )
-            finally:
-                self.state_obj.angles = previous_angles
-
-        self.controller.run_async("Manual single spectrum", run_manual_measure)
+        self.controller.run_measure(
+            1,
+            label="Manual single spectrum",
+            on_finally=lambda: setattr(self.state_obj, "angles", previous_angles),
+        )
 
     def _view(self):
         self.controller.run_async("View snapshot", self.workflow.view_snapshot)

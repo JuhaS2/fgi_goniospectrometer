@@ -698,12 +698,20 @@ class WorkflowService:
                 return
             if progress:
                 progress(
-                    "Angle {}/{}: ze={} az={} be={}".format(idx, total, ze, az, be)
+                    "Angle {}/{}: moving motors · ze={} az={} be={}".format(
+                        idx, total, ze, az, be
+                    )
                 )
             self._move_measurement_axes(ze=ze, az=az, be=be)
             if wwb == 0.0:
                 continue
             self._apply_opt()
+            if progress:
+                progress(
+                    "Angle {}/{}: collecting spectra · ze={} az={} be={}".format(
+                        idx, total, ze, az, be
+                    )
+                )
             ss, rr = self._measure_at_angle(repeats=repeats)
             payload = rr if self.state.reflectance_mode else ss
             lz = float(self.state.light_zenith_deg)
