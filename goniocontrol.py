@@ -25,7 +25,12 @@ from goniocontrol_app.services.mock_services import (
 )
 from goniocontrol_app.services.live_spectrum_service import LiveSpectrumService
 from goniocontrol_app.services.persistence_service import PersistenceService
-from goniocontrol_app.state import DEFAULT_SEQUENCE_REPEATS, AppState
+from goniocontrol_app.state import (
+    CALIBRATION_SPECTRUM_AVERAGES,
+    DEFAULT_SEQUENCE_REPEATS,
+    DEFAULT_SPECTRUM_AVERAGES,
+    AppState,
+)
 from goniocontrol_app.workflow_service import WorkflowService
 
 DEFAULT_OUTPUT_DATA_DIR = Path("/home/pi/Desktop/Data")
@@ -83,6 +88,7 @@ class GoniocontrolGUI(tk.Tk):
             emit_log=self.log,
             should_idle_poll=lambda: not self.controller.is_busy()
             and not self._shutting_down,
+            get_spectrum_averages=lambda: self.state_obj.spectrum_averages,
         )
         self.workflow.on_spectrum = self.live_spectrum_service.on_spectrum
         # Dedicated single-thread executor for periodic spectrometer health
@@ -110,6 +116,20 @@ class GoniocontrolGUI(tk.Tk):
         )
         self.angles_status_var = tk.StringVar(value="Sequence with 0 positions")
         self.repeats_var = tk.StringVar(value=str(DEFAULT_SEQUENCE_REPEATS))
+        self.spectrum_averages_var = tk.StringVar(
+            value=str(DEFAULT_SPECTRUM_AVERAGES)
+        )
+        self.spectrum_averages_var.trace_add(
+            "write", lambda *_: self._push_acquisition_settings_to_state()
+        )
+        self.calibration_averages_var = tk.StringVar(
+            value=str(CALIBRATION_SPECTRUM_AVERAGES)
+        )
+        self.calibration_averages_var.trace_add(
+            "write", lambda *_: self._push_calibration_settings_to_state()
+        )
+        self._push_acquisition_settings_to_state()
+        self._push_calibration_settings_to_state()
         self.sensor_zenith_var = tk.StringVar(value="0")
         self.optimize_status_var = tk.StringVar(value="Not optimized yet!")
         self.dark_last_measured_var = tk.StringVar(value="Not collected yet!")
@@ -414,41 +434,49 @@ class GoniocontrolGUI(tk.Tk):
         calibration_frame = ttk.LabelFrame(parent, text="Spectrometer Config")
         calibration_button_width = 16
         calibration_frame.columnconfigure(0, weight=0)
+        ttk.Label(calibration_frame, text="Averages:").grid(
+            row=0, column=0, sticky="w", padx=4, pady=(4, 0)
+        )
+        ttk.Entry(
+            calibration_frame,
+            textvariable=self.calibration_averages_var,
+            width=8,
+        ).grid(row=0, column=1, sticky="w", padx=4, pady=(4, 0))
         ttk.Button(
             calibration_frame,
             text="Optimize",
             command=self._optimize,
             width=calibration_button_width,
-        ).grid(row=0, column=0, padx=4, pady=4, sticky="w")
+        ).grid(row=1, column=0, padx=4, pady=4, sticky="w")
         ttk.Label(
             calibration_frame,
             textvariable=self.optimize_status_var,
             font=self.angles_status_font,
-        ).grid(row=1, column=0, sticky="w", padx=4, pady=(0, 4))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
 
         ttk.Button(
             calibration_frame,
             text="Dark Current",
             command=self._dark,
             width=calibration_button_width,
-        ).grid(row=2, column=0, padx=4, pady=(6, 4), sticky="w")
+        ).grid(row=3, column=0, padx=4, pady=(6, 4), sticky="w")
         ttk.Label(
             calibration_frame,
             textvariable=self.dark_last_measured_var,
             font=self.angles_status_font,
-        ).grid(row=3, column=0, sticky="w", padx=4, pady=(0, 4))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
 
         ttk.Button(
             calibration_frame,
             text="White Reference",
             command=self._white,
             width=calibration_button_width,
-        ).grid(row=4, column=0, padx=4, pady=(6, 4), sticky="w")
+        ).grid(row=5, column=0, padx=4, pady=(6, 4), sticky="w")
         ttk.Label(
             calibration_frame,
             textvariable=self.white_last_measured_var,
             font=self.angles_status_font,
-        ).grid(row=5, column=0, sticky="w", padx=4, pady=(0, 4))
+        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
 
         return calibration_frame
 
@@ -470,12 +498,20 @@ class GoniocontrolGUI(tk.Tk):
             row=1, column=2, padx=4
         )
 
-        ttk.Label(sequence_frame, text="Sequence repeats:").grid(
-            row=2, column=0, sticky="w", pady=(10, 0)
+        settings_row = ttk.Frame(sequence_frame)
+        settings_row.grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ttk.Label(settings_row, text="Sequence repeats:").grid(
+            row=0, column=0, sticky="w"
         )
-        ttk.Entry(sequence_frame, textvariable=self.repeats_var, width=20).grid(
-            row=2, column=1, sticky="w", padx=4, pady=(10, 0)
+        ttk.Entry(settings_row, textvariable=self.repeats_var, width=8).grid(
+            row=0, column=1, padx=(4, 16), sticky="w"
         )
+        ttk.Label(settings_row, text="Spectrum averages:").grid(
+            row=0, column=2, sticky="w"
+        )
+        ttk.Entry(
+            settings_row, textvariable=self.spectrum_averages_var, width=8
+        ).grid(row=0, column=3, padx=4, sticky="w")
         style = ttk.Style()
         style.configure("TallMeasure.TButton", padding=(8, 10))
 
@@ -810,6 +846,38 @@ class GoniocontrolGUI(tk.Tk):
         self._sync_runtime_state_ui()
         return True
 
+    def _current_spectrum_averages(self):
+        try:
+            return max(
+                1,
+                int(
+                    self.spectrum_averages_var.get()
+                    or str(DEFAULT_SPECTRUM_AVERAGES)
+                ),
+            )
+        except ValueError:
+            return DEFAULT_SPECTRUM_AVERAGES
+
+    def _push_acquisition_settings_to_state(self):
+        self.state_obj.spectrum_averages = self._current_spectrum_averages()
+
+    def _current_calibration_averages(self):
+        try:
+            return max(
+                1,
+                int(
+                    self.calibration_averages_var.get()
+                    or str(CALIBRATION_SPECTRUM_AVERAGES)
+                ),
+            )
+        except ValueError:
+            return CALIBRATION_SPECTRUM_AVERAGES
+
+    def _push_calibration_settings_to_state(self):
+        self.state_obj.calibration_spectrum_averages = (
+            self._current_calibration_averages()
+        )
+
     def _push_output_metadata_to_state(self):
         self.state_obj.authors = (self.output_authors_var.get() or "").strip()
         self.state_obj.target_name = (self.output_target_name_var.get() or "").strip()
@@ -982,6 +1050,7 @@ class GoniocontrolGUI(tk.Tk):
         )
         if not proceed:
             return
+        self._push_calibration_settings_to_state()
 
         def run():
             self.workflow.collect_dark()
@@ -1012,6 +1081,7 @@ class GoniocontrolGUI(tk.Tk):
                 "Dark Current must be measured before White Reference",
             )
             return
+        self._push_calibration_settings_to_state()
 
         def run():
             za = float(self.sensor_zenith_var.get() or "0")
@@ -1032,6 +1102,7 @@ class GoniocontrolGUI(tk.Tk):
     def _ending_white(self):
         if not self._ensure_output_dataset_selected():
             return
+        self._push_calibration_settings_to_state()
         za = float(self.sensor_zenith_var.get() or "0")
         self.controller.run_async(
             "Collect ending white", lambda: self.workflow.collect_ending_white(za)
@@ -1194,6 +1265,7 @@ class GoniocontrolGUI(tk.Tk):
         if not self._ensure_output_dataset_selected():
             return
         self._push_output_metadata_to_state()
+        self._push_acquisition_settings_to_state()
         repeats = int(self.repeats_var.get() or str(DEFAULT_SEQUENCE_REPEATS))
         self.controller.run_measure(repeats)
 
@@ -1220,6 +1292,7 @@ class GoniocontrolGUI(tk.Tk):
         if not self._ensure_output_dataset_selected():
             return
         self._push_output_metadata_to_state()
+        self._push_acquisition_settings_to_state()
 
         angle_row = (sensor_pol, lamp_pol, zenith, azimuth, sample, 0.0, 1.0)
         previous_angles = list(self.state_obj.angles)
@@ -1239,6 +1312,7 @@ class GoniocontrolGUI(tk.Tk):
         )
 
     def _view(self):
+        self._push_acquisition_settings_to_state()
         self.controller.run_async("View snapshot", self.workflow.view_snapshot)
 
     def _plot(self):

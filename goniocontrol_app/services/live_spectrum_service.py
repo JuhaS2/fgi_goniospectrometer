@@ -13,6 +13,7 @@ class LiveSpectrumService:
         spectrometer: Any,
         emit_log: Optional[Callable[[str], None]] = None,
         should_idle_poll: Optional[Callable[[], bool]] = None,
+        get_spectrum_averages: Optional[Callable[[], int]] = None,
         min_interval_s: float = 0.1,
         max_interval_s: float = 1.0,
         error_max_interval_s: float = 30.0,
@@ -21,6 +22,9 @@ class LiveSpectrumService:
         self.spectrometer = spectrometer
         self.emit_log = emit_log
         self.should_idle_poll = should_idle_poll or (lambda: True)
+        self.get_spectrum_averages = get_spectrum_averages or (
+            lambda: DEFAULT_SPECTRUM_AVERAGES
+        )
         self.min_interval_s = min_interval_s
         self.max_interval_s = max_interval_s
         self.error_max_interval_s = max(error_max_interval_s, max_interval_s)
@@ -89,7 +93,7 @@ class LiveSpectrumService:
             self._maybe_reconnect_before_poll(poll_id)
             try:
                 header, spectrum = self.spectrometer.read_average(
-                    DEFAULT_SPECTRUM_AVERAGES
+                    self.get_spectrum_averages()
                 )
                 elapsed_s = max(0.001, time.perf_counter() - t0)
                 self._publish(header, spectrum, "idle_poll")

@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
-from goniocontrol_app.state import DEFAULT_SPECTRUM_AVERAGES
 
 try:
     from spectrum_math_utils import (
@@ -512,9 +511,10 @@ class WorkflowService:
         return None
 
     def collect_dark(self):
-        header, dc = self.spectrometer.read_average(25)
+        averages = self._calibration_averages()
+        header, dc = self.spectrometer.read_average(averages)
         drift = header[22]
-        idata = self._take_i(repeats=25)
+        idata = self._take_i(averages=averages)
         dc_remainder = MakeI(idata, dc, drift, self._vdcc)
         self.state.calibration.dark_current = dc
         self.state.calibration.drift_dark = drift
@@ -532,7 +532,7 @@ class WorkflowService:
         self._require_dark()
         npols = self.state.devices.npols
         if npols == 1:
-            wrdata = self._take_i(repeats=25)
+            wrdata = self._take_i(averages=self._calibration_averages())
             wc = (
                 MakeI(wrdata, self._dc(), self._drift(), self._vdcc)
                 - self._dc_remainder()
@@ -540,7 +540,9 @@ class WorkflowService:
             self.state.calibration.white = wc
             self.persistence.save_array("White1.npy", wc)
         elif npols == 3:
-            wrdata = self._take_pol_sequence_iqu()
+            wrdata = self._take_pol_sequence_iqu(
+                averages=self._calibration_averages()
+            )
             aa = MakeAA3(wrdata)
             wc = MakeStokesIQU(wrdata, self._dc(), self._drift(), self._vdcc, aa)
             self.state.calibration.aa = aa
@@ -548,7 +550,9 @@ class WorkflowService:
             self.persistence.save_array("AA3.npy", aa)
             self.persistence.save_array("White3.npy", wc)
         elif npols == 16:
-            wrdata = self._take_pol_sequence_44()
+            wrdata = self._take_pol_sequence_44(
+                averages=self._calibration_averages()
+            )
             aa = MakeAA44(wrdata)
             wc = MakeMuller(wrdata, self._dc(), self._drift(), self._vdcc, aa)
             self.state.calibration.aa = aa
@@ -571,7 +575,7 @@ class WorkflowService:
         self.go_zenith(wr_zenith)
         npols = self.state.devices.npols
         if npols == 1:
-            wrdata = self._take_i(repeats=25)
+            wrdata = self._take_i(averages=self._calibration_averages())
             wce = (
                 MakeI(wrdata, self._dc(), self._drift(), self._vdcc)
                 - self._dc_remainder()
@@ -579,14 +583,18 @@ class WorkflowService:
             self.state.calibration.ending_white = wce
             self.persistence.save_array("{}White1E.npy".format(self.state.outfile), wce)
         elif npols == 3:
-            wrdata = self._take_pol_sequence_iqu()
+            wrdata = self._take_pol_sequence_iqu(
+                averages=self._calibration_averages()
+            )
             wce = MakeStokesIQU(
                 wrdata, self._dc(), self._drift(), self._vdcc, self.state.calibration.aa
             )
             self.state.calibration.ending_white = wce
             self.persistence.save_array("White3E.npy", wce)
         elif npols == 16:
-            wrdata = self._take_pol_sequence_44()
+            wrdata = self._take_pol_sequence_44(
+                averages=self._calibration_averages()
+            )
             wce = MakeMuller(
                 wrdata, self._dc(), self._drift(), self._vdcc, self.state.calibration.aa
             )
@@ -804,26 +812,36 @@ class WorkflowService:
             # Live-view callbacks must never impact measurement workflows.
             pass
 
-    def _take_i(self, repeats=DEFAULT_SPECTRUM_AVERAGES, source="workflow"):
-        header, spectrum = self.spectrometer.read_average(repeats)
+    def _spectrum_averages(self):
+        return max(1, int(self.state.spectrum_averages))
+
+    def _calibration_averages(self):
+        return max(1, int(self.state.calibration_spectrum_averages))
+
+    def _take_i(self, averages=None, source="workflow"):
+        if averages is None:
+            averages = self._spectrum_averages()
+        header, spectrum = self.spectrometer.read_average(averages)
         self._publish_spectrum(header, spectrum, source)
         drift = header[22]
         return [(0.0, 0.0, spectrum, drift)]
 
-    def _take_pol_sequence_iqu(self, source="workflow"):
+    def _take_pol_sequence_iqu(self, source="workflow", averages=None):
+        if averages is None:
+            averages = self._spectrum_averages()
         subdata = []
         self.lcc.set_retardance(0)
         for wg in [0, 45, 90, 135]:
             self._move_sensor_polarizer(wg)
-            header, spectrum = self.spectrometer.read_average(
-                DEFAULT_SPECTRUM_AVERAGES
-            )
+            header, spectrum = self.spectrometer.read_average(averages)
             self._publish_spectrum(header, spectrum, source)
             subdata.append((0.0, wg, spectrum, header[22]))
         self._move_sensor_polarizer(0)
         return subdata
 
-    def _take_pol_sequence_44(self, source="workflow"):
+    def _take_pol_sequence_44(self, source="workflow", averages=None):
+        if averages is None:
+            averages = self._spectrum_averages()
         subdata = []
         rets = list(self.lcc.retardances) if self.lcc.retardances is not None else [0]
         rets = rets or [0]
@@ -833,9 +851,7 @@ class WorkflowService:
                 self._move_sensor_polarizer(wg)
                 for ret in rets:
                     self.lcc.set_retardance(float(ret))
-                    header, spectrum = self.spectrometer.read_average(
-                        DEFAULT_SPECTRUM_AVERAGES
-                    )
+                    header, spectrum = self.spectrometer.read_average(averages)
                     self._publish_spectrum(header, spectrum, source)
                     subdata.append((float(ret), wg, lamp, spectrum, header[22]))
         self._move_sensor_polarizer(0)

@@ -8,6 +8,7 @@ import numpy as np
 
 DEFAULT_SEQUENCE_REPEATS = 1
 DEFAULT_SPECTRUM_AVERAGES = 10
+CALIBRATION_SPECTRUM_AVERAGES = 25
 
 AngleRow = Tuple[float, float, float, float, float, float, float]
 
@@ -63,6 +64,8 @@ class AppState:
         default_factory=lambda: Path("example_sequences/PrincipalPlane_5deg.seq.txt")
     )
     angles: List[AngleRow] = field(default_factory=list)
+    spectrum_averages: int = DEFAULT_SPECTRUM_AVERAGES
+    calibration_spectrum_averages: int = CALIBRATION_SPECTRUM_AVERAGES
     data: List[np.ndarray] = field(default_factory=list)
     runtime_notice: Optional[str] = None
     calibration: CalibrationState = field(default_factory=CalibrationState)
