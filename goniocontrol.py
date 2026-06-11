@@ -389,15 +389,16 @@ class GoniocontrolGUI(tk.Tk):
 
     def _build_sensor_zenith_frame(self, parent):
         sensor_frame = ttk.LabelFrame(parent, text="Sensor Zenith")
-        ttk.Button(
+        drive_btn = ttk.Button(
             sensor_frame,
             text="Drive",
             width=6,
             command=self._drive_sensor_zenith,
-        ).grid(row=0, column=0, padx=(4, 2), pady=4, sticky="w")
-        ttk.Entry(sensor_frame, textvariable=self.sensor_zenith_var, width=8).grid(
-            row=0, column=1, padx=(2, 4), pady=4, sticky="w"
         )
+        drive_btn.grid(row=0, column=0, padx=(4, 2), pady=4, sticky="w")
+        entry = ttk.Entry(sensor_frame, textvariable=self.sensor_zenith_var, width=8)
+        entry.grid(row=0, column=1, padx=(2, 4), pady=4, sticky="w")
+        self._bind_return_to_drive(entry, drive_btn)
         return sensor_frame
 
     def _build_output_file_frame(self, parent):
@@ -585,9 +586,10 @@ class GoniocontrolGUI(tk.Tk):
                 width=3,
                 command=lambda r=role: self._nudge_target(r, -0.1),
             ).grid(row=0, column=1, padx=(0, 2))
-            ttk.Entry(
+            target_entry = ttk.Entry(
                 target_controls, textvariable=self.motor_target_vars[role], width=6
-            ).grid(row=0, column=2, padx=(0, 2))
+            )
+            target_entry.grid(row=0, column=2, padx=(0, 2))
             ttk.Button(
                 target_controls,
                 text=">",
@@ -606,6 +608,7 @@ class GoniocontrolGUI(tk.Tk):
                 command=lambda r=role: self._drive_motor(r),
             )
             drive_btn.grid(row=row_idx, column=3, padx=4, pady=2)
+            self._bind_return_to_drive(target_entry, drive_btn)
             zero_btn = ttk.Button(
                 goniometer_frame,
                 text="Set Zero",
@@ -1133,6 +1136,14 @@ class GoniocontrolGUI(tk.Tk):
 
     def _format_angle(self, angle):
         return "{:+.2f}°".format(angle)
+
+    def _bind_return_to_drive(self, entry, drive_button):
+        def on_return(_event):
+            drive_button.invoke()
+            return "break"
+
+        entry.bind("<Return>", on_return)
+        entry.bind("<KP_Enter>", on_return)
 
     def _on_light_angle_focus_out(self, event=None):
         raw_z = self.light_zenith_var.get().strip()
